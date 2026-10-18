@@ -1,6 +1,6 @@
 // Offline support: app files and fonts are cached and served from the cache without a connection. Offer data lives in
 // IndexedDB; requests to Google (sign-in, Drive API) always go to the network.
-const V = 'rai-1.6.2';
+const V = 'rai-1.6.4';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'md.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

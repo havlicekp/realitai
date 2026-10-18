@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.2';
+const APP_V = '1.6.4';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -374,7 +374,7 @@ async function viewDetail(id, tab) {
     <div class="sheet"><div class="head"><div style="min-width:0"><h1>${esc(titleOf(d))}</h1><div class="u">${esc(placeOf(d.lokalita) || d.nazev)}</div><div class="p">${kc(d.cena)}</div></div>${ring}</div>
       <div class="tabs" role="tablist" aria-label="Části detailu">${TABS.map(([k, l]) => `<button role="tab" data-tab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
       <div class="panel">${body}</div></div>
-    <div class="bottom">${d.url ? `<a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">Inzerát ${I.ext}</a>` : ''}<a class="btn pri" style="flex:1.6" href="#/n/${id}/prohlidka">${I.home}Prohlídka</a></div></div>`;
+    <div class="bottom">${d.url ? `<a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">Inzerát ${I.ext}</a>` : ''}<button class="btn pri" style="flex:1.6" data-a="visit-go">${I.home}Prohlídka</button></div></div>`;
 }
 // Section picker: summary + report headings h1–h4 indented by level; shows the current section while scrolling
 function buildToc(root) {
@@ -622,7 +622,7 @@ function sheet(title, body, onOk, okLabel = 'Uložit') {
   document.body.appendChild(el);
   const close = () => el.remove();
   el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-x]')) close(); });
-  el.querySelectorAll('.chips2 button').forEach(b => b.addEventListener('click', () => { const g = b.parentElement; g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b && !x.classList.contains('on') ? true : false)); const inp = el.querySelector(`[name="${g.dataset.name}"]`); if (inp) inp.value = b.classList.contains('on') ? b.dataset.v : ''; }));
+  el.querySelectorAll('.chips2:not(.multi) button').forEach(b => b.addEventListener('click', () => { const g = b.parentElement; g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b && !x.classList.contains('on') ? true : false)); const inp = el.querySelector(`[name="${g.dataset.name}"]`); if (inp) inp.value = b.classList.contains('on') ? b.dataset.v : ''; }));
   el.querySelector('form').addEventListener('submit', async e => { e.preventDefault(); const v = Object.fromEntries(new FormData(e.target)); const err = await onOk(v, el); if (err) { const p = el.querySelector('.sherr') || el.querySelector('.shb').insertAdjacentElement('afterbegin', Object.assign(document.createElement('p'), { className: 'sherr err' })); p.textContent = err; return; } close(); render(); });
   setTimeout(() => { const f = el.querySelector('input:not([type=hidden]), select'); if (f && f.dataset.focus) f.focus(); }, 50);
   return el;
@@ -638,17 +638,21 @@ const ACTIONS = {
   'meas-del': a => { if (confirm('Smazat toto měření?')) queueOp({ nid: route().id, op: 'mereni.del', t: a.dataset.t }).then(render); },
   'pr-del': a => { if (confirm('Smazat tuto prohlídku?')) queueOp({ nid: +a.dataset.nid, op: 'prohlidka.del', match: JSON.parse(a.dataset.m) }).then(render); },
   'plan': () => planSheet(null),
+  // detail → Visit: with no visit planned (today or later) first ask for the date, then open the visit mode
+  'visit-go': async () => { const id = route().id, d = await getDoc(id), go = () => { location.hash = `#/n/${id}/prohlidka`; };
+    if (((d && d.postup && d.postup.prohlidky) || []).some(p => p.datum && p.datum >= today())) go(); else planSheet(id, go); },
 };
 // Visit: for a given offer (id) or with an offer picker (Visits → Schedule)
-function planSheet(id) {
+function planSheet(id, after) {
   const items = idxItems().filter(it => it.ulozeno !== false || it.vlastni);
   const pick = id ? '' : `<label class="lbl">Nabídka</label><input class="field" data-a="plan-q" placeholder="Hledat ulici, čtvrť…" autocomplete="off"><div class="pick" data-pick>${pickList(items, '')}</div><input type="hidden" name="nid">`;
-  const el = sheet(id ? 'Prohlídka' : 'Naplánovat prohlídku', `${pick}<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${today()}">
+  const el = sheet(id && !after ? 'Prohlídka' : 'Naplánovat prohlídku', `${pick}<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${today()}">
     <label class="lbl">Čas (nepovinné)</label><input class="field" name="cas" type="time"><label class="lbl">Dojem (po prohlídce)</label><div class="chips2" data-name="dojem">${[1, 2, 3, 4, 5].map(n => `<button type="button" data-v="${n}">${n}</button>`).join('')}</div><input type="hidden" name="dojem">
     <label class="lbl">Poznámka</label><input class="field" name="pozn" placeholder="co jste zjistil (hluk, světlo, sousedé, stav…)">`,
   async v => { const nid = id || +v.nid; if (!nid) return 'Vyberte nabídku.'; if (!v.datum) return 'Zadejte datum.';
     await queueOp({ nid, op: 'prohlidka.add', item: { id: newId(), datum: v.datum, cas: v.cas || '', dojem: +v.dojem || null, pozn: v.pozn.trim() } });
-}, id ? 'Uložit' : 'Naplánovat');
+    if (after) after(nid);
+}, id && !after ? 'Uložit' : 'Naplánovat');
   if (!id) {
     const q = el.querySelector('[data-a=plan-q]'), box = el.querySelector('[data-pick]'), hid = el.querySelector('[name=nid]');
     q.addEventListener('input', () => { box.innerHTML = pickList(items, q.value); });
@@ -808,12 +812,13 @@ async function viewVisit(id, tab) {
   else if (tab === 'foto') {
     const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
     // same row format as noise: photo, part of the flat, time, small x to delete
-    body = ph.length ? `<div class="box"><h3>Fotky <small>${ph.length}</small></h3><div class="mlist">${ph.map(p => `<div class="mrow"><button class="phs" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}" aria-label="Upravit fotku"></button><button class="mtx" data-a="ph-open" data-fid="${p.fid}"><b class="${p.popis ? '' : 'ph0'}">${esc(p.popis || 'Kde? Klepněte a vyberte')}</b><small>${fmtT(p.at)}</small></button><button class="x" data-a="ph-del" data-fid="${p.fid}" aria-label="Smazat fotku">×</button></div>`).join('')}</div></div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
+    body = ph.length ? `<div class="box"><div class="mlist">${ph.map(p => `<div class="mrow"><button class="phs" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}" aria-label="Upravit fotku"></button><button class="mtx" data-a="ph-open" data-fid="${p.fid}"><b class="${p.popis ? '' : 'ph0'}">${esc(p.popis || 'Kde? Klepněte a vyberte')}</b><small>${fmtT(p.at)}</small></button><button class="x" data-a="ph-del" data-fid="${p.fid}" aria-label="Smazat fotku">×</button></div>`).join('')}</div></div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
     body += `<p class="hint">Fotky se uloží do Příloh nabídky v počítači${fotoPolicy() === 'hned' ? '' : fotoPolicy() === 'wifi' ? ' a odešlou se přes Wi‑Fi' : ' po „Odeslat teď“ v Nastavení'}.</p>`;
     bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
   } else {
     const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
-    body = `<div class="box"><h3>Naměřeno${L.hlukNoc ? ` <small>hluková mapa v noci ${L.hlukNoc} dB</small>` : ''}</h3>${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))}</span><div><b>${esc(x.misto || 'místo neuvedeno')}</b><small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></div><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
+    body = `<div class="box">${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))} dB</span><div><b>${esc(x.misto || 'místo neuvedeno')}</b><small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></div><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
+    if (L.hlukNoc) body += `<p class="hint">Hluková mapa Prahy v noci u domu: ${L.hlukNoc} dB.</p>`;
     bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
   return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><small>${visitWhen(d)}</small><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
@@ -860,12 +865,13 @@ const CASTI = ['ložnice', 'pokoj', 'obývák', 'kuchyň', 'koupelna', 'WC', 'ch
 async function photoSheet(fid) {
   const p = await DB.get('photos', fid); if (!p) return;
   const url = URL.createObjectURL(new Blob([p.buf], { type: p.type }));
-  const el = sheet('Kde je fotka?', `<img class="phbig" src="${url}" alt=""><div class="chips2" data-name="popis">${CASTI.map(m => `<button type="button" data-v="${m}"${p.popis === m ? ' class="on"' : ''}>${m}</button>`).join('')}</div>
-    <input class="field" name="popis" value="${esc(p.popis || '')}" placeholder="nebo vlastní popis, např. vlhkost v rohu koupelny">`,
-  async v => { const popis = v.popis.trim(), cur = await DB.get('photos', fid); if (!cur || popis === (cur.popis || '')) return; // re-read: the upload may have finished meanwhile
+  // several parts can be selected (e.g. "kuchyň, obývák"); anything else goes to the own description
+  const parts = String(p.popis || '').split(/,\s*/).filter(Boolean), sel = new Set(parts.filter(x => CASTI.includes(x))), own = parts.filter(x => !CASTI.includes(x)).join(', ');
+  const el = sheet('Kde je fotka?', `<img class="phbig" src="${url}" alt=""><div class="chips2 multi">${CASTI.map(m => `<button type="button" data-v="${m}" aria-pressed="${sel.has(m)}"${sel.has(m) ? ' class="on"' : ''}>${m}</button>`).join('')}</div>
+    <input class="field" name="own" value="${esc(own)}" placeholder="vlastní popis, např. vlhkost v rohu">`,
+  async v => { const popis = [...CASTI.filter(m => sel.has(m)), v.own.trim()].filter(Boolean).join(', '), cur = await DB.get('photos', fid); if (!cur || popis === (cur.popis || '')) return; // re-read: the upload may have finished meanwhile
     cur.popis = popis; await DB.put('photos', fid, cur); if (cur.uploaded) await queueOp({ nid: cur.nid, op: 'foto.set', fid, popis }); }, 'Uložit');
-  // a chip is enough – save right away
-  el.querySelectorAll('.chips2 button').forEach(b => b.addEventListener('click', () => { if (b.classList.contains('on')) el.querySelector('form').requestSubmit(); }));
+  el.querySelectorAll('.chips2.multi button').forEach(b => b.addEventListener('click', () => { const m = b.dataset.v; if (sel.has(m)) sel.delete(m); else sel.add(m); b.classList.toggle('on', sel.has(m)); b.setAttribute('aria-pressed', sel.has(m)); }));
 }
 // Photo from the camera: shrink to 2000 px JPEG (white background), keep it on the phone and upload by the photo policy
 async function addPhoto(nid, file) {
