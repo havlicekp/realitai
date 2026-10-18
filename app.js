@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.13';
+const APP_V = '1.7.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -50,7 +50,7 @@ const dbCol = v => v < 40 ? '#A9CF95' : v < 50 ? '#D9C46A' : v < 55 ? '#E9A86A' 
 const titleOf = it => [it.dispozice, it.plocha ? it.plocha + ' m²' : ''].filter(Boolean).join(' · ') || it.nazev || 'Nabídka';
 const placeOf = it => [it.ulice, it.cast || it.mesto].filter(Boolean).join(', ');
 const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-const STAVY = { zajimavy: 'Zajímavý', prohlidka: 'Prohlídka domluvena', 'po-prohlidce': 'Po prohlídce', nabidka: 'Podána nabídka', rezervace: 'Rezervace', odmitnuto: 'Odmítnuto', koupeno: 'Koupeno' };
+const visitsOf = d => (d && (d.prohlidky || (d.postup || {}).prohlidky)) || []; // older data kept visits under postup
 const I = {
   back: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
   home: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>',
@@ -255,7 +255,7 @@ const nav = () => '';
 const upcoming = p => p.datum && (p.datum > today() || (p.datum === today() && !p.dojem)); // today's visit with a rating has already happened
 const planned = it => (it.prohlidky || []).filter(upcoming).sort((a, b) => a.datum.localeCompare(b.datum))[0] || null;
 const FILTRY = [
-  ['prohlidka', 'Na prohlídku', it => !!planned(it) || it.stav === 'prohlidka'],
+  ['prohlidka', 'Na prohlídku', it => !!planned(it)],
   ['ulozene', 'Uložené', it => it.ulozeno !== false && !it.vlastni],
   ['analyza', 'S analýzou', it => it.skore != null || it.ko],
   ['vlastni', 'Vlastní', it => it.vlastni],
@@ -269,7 +269,6 @@ function card(it) {
   if (p) { const d = new Date(p.datum); tags.push(`<span class="tag date">${DNY[d.getDay()].toLowerCase()} ${d.getDate()}. ${d.getMonth() + 1}.</span>`); }
   if (it.zmenaCeny) tags.push(`<span class="tag ${it.zmenaCeny < 0 ? 'ok' : 'bad'}">${it.zmenaCeny < 0 ? '↓' : '↑'} ${Math.abs(it.zmenaCeny) >= 1e6 ? mil(Math.abs(it.zmenaCeny)) : Math.round(Math.abs(it.zmenaCeny) / 1000).toLocaleString('cs-CZ') + ' tis.'}</span>`);
   if (it.ulozeno === false) tags.push('<span class="tag">už neuloženo</span>');
-  if (it.stav && STAVY[it.stav] && it.stav !== 'prohlidka') tags.push(`<span class="tag">${esc(STAVY[it.stav])}</span>`);
   return `<a class="card${it.ulozeno === false ? ' gone' : ''}" href="#/n/${it.id}"><div class="th" data-th="${it.id}"></div><div class="bd">
     <div class="tags">${tags.join('')}</div><div class="t">${esc(titleOf(it))}</div><div class="u">${esc(placeOf(it))}</div><div class="p">${kc(it.cena)}</div></div></a>`;
 }
@@ -548,7 +547,7 @@ const saveOutbox = () => DB.put('meta', 'outbox', { pending: OB.pending, sent: O
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 async function queueOp(o) {
   o = Object.assign({ cid: newId(), at: new Date().toISOString() }, o);
-  if (o.op === 'notes.set' || o.op === 'postup.stav') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // keep the latest version only
+  if (o.op === 'notes.set') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // keep the latest version only
   OB.pending.push(o);
   await saveOutbox();
   flushSoon();
@@ -590,21 +589,14 @@ addEventListener('online', () => flushSoon(500));
 const myOps = nid => OB.sent.flatMap(x => x.ops).concat(OB.pending).filter(o => o.nid === nid);
 const sameItem = (x, m) => m && ((m.id && x.id === m.id) || (!m.id && x.datum === m.datum && (x.pozn || '') === (m.pozn || '') && (x.nabidka || null) === (m.nabidka || null)));
 function applyLocal(d, o) {
-  const p = d.postup = Object.assign({ prohlidky: [], jednani: [] }, d.postup || {});
-  p.prohlidky = (p.prohlidky || []).slice(); p.jednani = (p.jednani || []).slice();
-  const add = (k, it) => { if (!p[k].some(x => it.id && x.id === it.id)) p[k].push(Object.assign({ local: true }, it)); };
-  const del = (k, m) => { const i = p[k].findIndex(x => sameItem(x, m)); if (i >= 0) p[k].splice(i, 1); };
+  const v = d.prohlidky = visitsOf(d).slice(); delete d.postup;
   if (o.op === 'notes.set') d.poznamky = { html: o.html, text: o.text, at: o.at, local: true };
   else if (o.op === 'mereni.add') { d.mereni = (d.mereni || []).slice(); if (!d.mereni.some(x => x.t === o.item.t)) d.mereni.push(Object.assign({ local: true }, o.item)); }
   else if (o.op === 'mereni.del') d.mereni = (d.mereni || []).filter(x => x.t !== o.t);
   else if (o.op === 'mereni.set') d.mereni = (d.mereni || []).map(x => x.t === o.t ? Object.assign({}, x, o.patch) : x);
-  else if (o.op === 'postup.stav') { p.stav = o.stav; p.duvod = o.duvod; p.stavAt = o.at; }
-  else if (o.op === 'prohlidka.add') add('prohlidky', o.item);
-  else if (o.op === 'prohlidka.del') del('prohlidky', o.match);
-  else if (o.op === 'prohlidka.set') { const i = p.prohlidky.findIndex(x => sameItem(x, o.match)); if (i >= 0) p.prohlidky[i] = Object.assign({}, p.prohlidky[i], o.patch, { local: true }); }
-  else if (o.op === 'jednani.add') add('jednani', o.item);
-  else if (o.op === 'jednani.del') del('jednani', o.match);
-  else if (o.op === 'konecna.set') p.konecna = o.konecna;
+  else if (o.op === 'prohlidka.add') { if (!v.some(x => o.item.id && x.id === o.item.id)) v.push(Object.assign({ local: true }, o.item)); }
+  else if (o.op === 'prohlidka.del') { const i = v.findIndex(x => sameItem(x, o.match)); if (i >= 0) v.splice(i, 1); }
+  else if (o.op === 'prohlidka.set') { const i = v.findIndex(x => sameItem(x, o.match)); if (i >= 0) v[i] = Object.assign({}, v[i], o.patch, { local: true }); }
   else if (o.op === 'overit.set') { d.overit = (d.overit || []).map(x => x.key === o.key ? Object.assign({}, x, o.patch) : x).filter(x => !x.del); }
   else if (o.op === 'overit.add') { d.overit = (d.overit || []).slice(); if (!d.overit.some(x => x.key === 'v:' + o.item.id)) d.overit.push({ key: 'v:' + o.item.id, text: o.item.text, grp: '', src: 'vlastni', done: false }); }
   return d;
@@ -614,9 +606,8 @@ async function getDoc(id) { const d = await DB.get('docs', id); if (!d) return d
 function idxItems() {
   const items = S.index || [];
   if (!OB.pending.length && !OB.sent.length) return items;
-  return items.map(it => { const ops = myOps(it.id).filter(o => /^(postup\.stav|prohlidka\.)/.test(o.op)); if (!ops.length) return it;
-    const d = ops.reduce(applyLocal, { postup: { stav: it.stav, prohlidky: (it.prohlidky || []).slice(), jednani: [] } });
-    return Object.assign({}, it, { stav: d.postup.stav, prohlidky: d.postup.prohlidky }); });
+  return items.map(it => { const ops = myOps(it.id).filter(o => /^prohlidka\./.test(o.op)); if (!ops.length) return it;
+    return Object.assign({}, it, { prohlidky: ops.reduce(applyLocal, { prohlidky: (it.prohlidky || []).slice() }).prohlidky }); });
 }
 
 // bottom sheet with a form
@@ -669,7 +660,7 @@ const ACTIONS = {
   },
   // detail → Visit: with no visit planned (today or later) first ask for the date, then open the visit mode
   'visit-go': async () => { const id = route().id, d = await getDoc(id), go = () => { location.hash = `#/n/${id}/prohlidka`; };
-    if (((d && d.postup && d.postup.prohlidky) || []).some(p => p.datum && p.datum >= today())) go(); else planSheet(id, go); },
+    if (visitsOf(d).some(p => p.datum && p.datum >= today())) go(); else planSheet(id, go); },
 };
 // Visit: for a given offer (id) or with an offer picker (Visits → Schedule)
 function planSheet(id, after) {
@@ -813,7 +804,7 @@ const fotoPolicy = () => { const p = LS.get('fotoPol') || 'hned'; return FOTO_PO
 const VTABS = [['body', 'Ověřit', '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'], ['pozn', 'Poznámky', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
   ['foto', 'Fotky', '<path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/>'], ['hluk', 'Hluk', '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/>']];
 const V = { editing: null, menu: null };
-const visitOf = d => { const l = ((d.postup || {}).prohlidky || []).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || '')))); return l.find(p => p.datum === today()) || l.find(upcoming) || null; };
+const visitOf = d => { const l = visitsOf(d).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || '')))); return l.find(p => p.datum === today()) || l.find(upcoming) || null; };
 function visitWhen(d) {
   const t = visitOf(d);
   if (!t) return 'PROHLÍDKA · NAPLÁNOVAT';
