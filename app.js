@@ -3,7 +3,7 @@
 // a stahuje jen soubory, jejichž otisk (appProperties.h) se změnil. Přihlášení Google = implicitní tok s přesměrováním,
 // rozsah drive.appdata (aplikace nevidí nic jiného z Drive). Bez serveru.
 'use strict';
-const APP_V = '1.0.0';
+const APP_V = '1.0.1';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -91,10 +91,15 @@ class NeedLogin extends Error {}
 async function api(path, as) {
   const t = token();
   if (!t) throw new NeedLogin('Přihlášení vypršelo');
-  const r = await fetch(apiBase() + path, { headers: { Authorization: 'Bearer ' + t } });
+  // každý požadavek: limit 30 s a zrušení celé synchronizace (po návratu z pozadí iOS „zamrzlé“ požadavky neskončí samy)
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 30000), stop = () => ctl.abort();
+  if (S.ctl) S.ctl.signal.addEventListener('abort', stop);
+  let r;
+  try { r = await fetch(apiBase() + path, { headers: { Authorization: 'Bearer ' + t }, signal: ctl.signal }); if (r.ok) r = { ok: true, status: r.status, data: as === 'blob' ? await r.blob() : await r.json() }; }
+  finally { clearTimeout(tm); if (S.ctl) S.ctl.signal.removeEventListener('abort', stop); }
   if (r.status === 401) { LS.del('token'); throw new NeedLogin('Přihlášení vypršelo'); }
   if (!r.ok) throw new Error(`Google Drive ${r.status}`);
-  return as === 'blob' ? r.blob() : r.json();
+  return r.data;
 }
 async function listFiles() {
   const out = [];
@@ -122,13 +127,18 @@ async function syncNow(manual) {
     if (LS.get('connected') && clientId() && !sessionStorage.getItem('rai-silent')) { sessionStorage.setItem('rai-silent', '1'); sessionStorage.setItem('rai-return', location.hash || '#/'); login('none'); return; }
     S.needLogin = true; render(); return;
   }
-  S.running = true; S.error = null; S.needLogin = false; S.done = 0; S.total = 0; render();
+  S.running = true; S.error = null; S.needLogin = false; S.done = 0; S.total = 0; S.last = Date.now(); S.ctl = new AbortController(); render();
+  // obrazovka se během stahování nezamkne (iOS 16.4+, Android); při přepnutí do jiné aplikace iOS stránku uspí –
+  // stažené se průběžně ukládá a další synchronizace naváže
+  try { S.wake = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (_) { S.wake = null; }
   try {
     const files = await listFiles(), byName = new Map(files.map(f => [f.name, f]));
     const fi = byName.get('index.json');
     if (!fi) { S.error = 'empty'; return; }
     const meta = (await DB.get('meta', 'index')) || {}, ih = (fi.appProperties || {}).h;
     const idx = meta.h === ih && meta.items ? meta : await api(`/drive/v3/files/${fi.id}?alt=media`);
+    // seznam uložit hned – i když se stahování detailů přeruší, nabídky jsou vidět (detail ukáže „ještě se stahuje“)
+    if (meta.h !== ih) { await DB.put('meta', 'index', { h: ih, at: idx.at, items: idx.items, syncedAt: meta.syncedAt || null }); S.index = idx.items; S.serverAt = idx.at; }
     const hs = (await DB.get('meta', 'hs')) || {}, ts = (await DB.get('meta', 'ts')) || {};
     const jobs = [];
     for (const it of idx.items) {
@@ -137,11 +147,11 @@ async function syncNow(manual) {
     }
     S.total = jobs.length; render();
     let lastDraw = 0;
-    await Promise.all([0, 1, 2, 3].map(async () => {
+    await Promise.all([0, 1, 2, 3, 4, 5].map(async () => {
       for (let j; (j = jobs.shift());) {
         if (j.k === 'n') { await DB.put('docs', j.it.id, await api(`/drive/v3/files/${byName.get(`n-${j.it.id}.json`).id}?alt=media`)); hs[j.it.id] = j.it.h; }
         else { await DB.put('thumbs', j.it.id, await api(`/drive/v3/files/${byName.get(`t-${j.it.id}.jpg`).id}?alt=media`, 'blob')); ts[j.it.id] = j.it.t; S.thumbs.delete(j.it.id); }
-        S.done++;
+        S.done++; S.last = Date.now();
         if (Date.now() - lastDraw > 400) { lastDraw = Date.now(); await DB.put('meta', 'hs', hs); await DB.put('meta', 'ts', ts); drawSync(); }
       }
     }));
@@ -155,9 +165,15 @@ async function syncNow(manual) {
     S.index = idx.items; S.serverAt = idx.at;
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   } catch (e) {
+    if (S.ctl && S.ctl.signal.aborted) { S.restart = true; return; } // přerušeno po návratu z pozadí – navázat
     if (e instanceof NeedLogin) { S.needLogin = true; if (manual && clientId()) { sessionStorage.setItem('rai-return', location.hash || '#/'); login(); return; } }
     else S.error = navigator.onLine ? e.message : 'offline';
-  } finally { S.running = false; refresh(); }
+  } finally {
+    S.running = false; S.ctl = null;
+    if (S.wake) { S.wake.release().catch(() => {}); S.wake = null; }
+    refresh();
+    if (S.restart) { S.restart = false; setTimeout(() => syncNow(), 300); }
+  }
 }
 // Po synchronizaci: když uživatel právě píše do hledání, překreslit jen seznam (nezavírat klávesnici)
 function refresh() {
@@ -167,7 +183,7 @@ function refresh() {
 }
 // Stav synchronizace v hlavičce (překreslí jen pilulku, ne celý seznam)
 function syncPill() {
-  if (S.running) return `<span class="pill run"><span>Synchronizuji${S.total ? ` ${S.done} z ${S.total}` : '…'}</span></span>`;
+  if (S.running) return `<span class="pill run"><span>${S.at ? 'Synchronizuji' : 'Stahuji'}${S.total ? ` ${S.done} z ${S.total}` : '…'}</span></span>`;
   if (S.needLogin) return `<span class="pill err"><span>Přihlášení vypršelo</span></span>`;
   if (S.error === 'offline') return `<span class="pill off"><span>Offline${S.at ? ' · data ' + ago(S.at) : ''}</span></span>`;
   if (S.error === 'empty') return `<span class="pill off"><span>V Drive zatím nejsou data</span></span>`;
@@ -229,6 +245,7 @@ function viewList() {
   const items = S.index || [], f = FILTRY.find(x => x[0] === ui.filtr) || FILTRY[1];
   const banner = S.needLogin ? `<div class="banner"><span>Přihlášení ke Google vypršelo – data jsou z ${S.at ? ago(S.at) : 'minula'}.</span><button class="sm" data-a="login">Přihlásit</button></div>`
     : S.error && S.error !== 'offline' && S.error !== 'empty' ? `<div class="banner"><span>${esc(S.error)}</span><button class="sm" data-a="sync-retry">Zkusit znovu</button></div>`
+    : S.running && !S.at ? `<div class="banner"><span>První stažení trvá asi minutu – nechte aplikaci otevřenou. Když ji zavřete, příště naváže tam, kde skončila.</span></div>`
     : S.error === 'empty' && !items.length ? `<div class="banner"><span>V Google Drive zatím nejsou data. V rozšíření RealitAI otevřete Nastavení → Telefon a klikněte na „Připojit Google Drive“.</span></div>` : '';
   return `<div class="scr">
     <div class="top"><div data-pill>${syncPill()}</div><button class="ibtn${S.running ? ' spin' : ''}" data-a="sync" aria-label="Synchronizovat teď">${I.sync}</button></div>
@@ -433,5 +450,10 @@ addEventListener('hashchange', () => sessionStorage.setItem('rai-nav', '1'));
   await render();
   if (LS.get('connected')) syncNow();
   // při návratu do aplikace (po delší době) stáhnout změny
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && LS.get('connected') && (!S.at || Date.now() - S.at > 10 * 60e3)) syncNow(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !LS.get('connected')) return;
+    // návrat z pozadí: přerušené stahování (iOS uspal stránku) zrušit a navázat; jinak po 10 min stáhnout změny
+    if (S.running) { if (Date.now() - S.last > 8000 && S.ctl) S.ctl.abort(); return; }
+    if (!S.at || Date.now() - S.at > 10 * 60e3 || (S.total && S.done < S.total)) syncNow();
+  });
 })();
