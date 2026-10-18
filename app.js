@@ -3,7 +3,7 @@
 // a stahuje jen soubory, jejichž otisk (appProperties.h) se změnil. Přihlášení Google = implicitní tok s přesměrováním,
 // rozsah drive.appdata (aplikace nevidí nic jiného z Drive). Bez serveru.
 'use strict';
-const APP_V = '1.0.2';
+const APP_V = '1.1.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -128,6 +128,7 @@ async function syncNow(manual) {
     S.needLogin = true; render(); return;
   }
   S.running = true; S.error = null; S.needLogin = false; S.done = 0; S.total = 0; S.last = Date.now(); S.ctl = new AbortController(); render();
+  await flush();
   // obrazovka se během stahování nezamkne (iOS 16.4+, Android); při přepnutí do jiné aplikace iOS stránku uspí –
   // stažené se průběžně ukládá a další synchronizace naváže
   try { S.wake = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (_) { S.wake = null; }
@@ -165,6 +166,8 @@ async function syncNow(manual) {
     S.at = Date.now();
     await DB.put('meta', 'index', { h: ih, at: idx.at, items: idx.items, syncedAt: S.at });
     S.index = idx.items; S.serverAt = idx.at;
+    // změny z telefonu, které rozšíření už zpracovalo, přestat překrývat
+    if (idx.applied && OB.sent.length) { const ap = new Set(idx.applied); OB.sent = OB.sent.filter(x => !ap.has(x.file)); await saveOutbox(); }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   } catch (e) {
     if (S.ctl && S.ctl.signal.aborted) { S.restart = true; return; } // přerušeno po návratu z pozadí – navázat
@@ -220,7 +223,8 @@ function setNav(cur) {
   $nav.querySelectorAll('a').forEach(a => { const on = a.dataset.nav === cur; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
 }
 const nav = () => '';
-const planned = it => (it.prohlidky || []).filter(p => p.datum && p.datum >= today()).sort((a, b) => a.datum.localeCompare(b.datum))[0] || null;
+const upcoming = p => p.datum && (p.datum > today() || (p.datum === today() && !p.dojem)); // dnešní s dojmem už proběhla
+const planned = it => (it.prohlidky || []).filter(upcoming).sort((a, b) => a.datum.localeCompare(b.datum))[0] || null;
 const FILTRY = [
   ['prohlidka', 'Na prohlídku', it => !!planned(it) || it.stav === 'prohlidka'],
   ['ulozene', 'Uložené', it => it.ulozeno !== false && !it.vlastni],
@@ -241,7 +245,7 @@ function card(it) {
     <div class="tags">${tags.join('')}</div><div class="t">${esc(titleOf(it))}</div><div class="u">${esc(placeOf(it))}</div><div class="p">${kc(it.cena)}</div></div></a>`;
 }
 function listBody() {
-  const items = S.index || [], f = FILTRY.find(x => x[0] === ui.filtr) || FILTRY[1];
+  const items = idxItems(), f = FILTRY.find(x => x[0] === ui.filtr) || FILTRY[1];
   const q = norm(ui.q).trim().split(/\s+/).filter(Boolean);
   let list = items.filter(f[2]).filter(it => q.every(w => (it.q || '').includes(w) || norm(titleOf(it) + ' ' + placeOf(it)).includes(w)));
   if (f[0] === 'prohlidka') list.sort((a, b) => ((planned(a) || {}).datum || '9').localeCompare((planned(b) || {}).datum || '9'));
@@ -254,7 +258,7 @@ function listBody() {
     ${list.length > ui.shown ? `<button class="more" data-a="more">Zobrazit další (${list.length - ui.shown})</button>` : ''}`;
 }
 function viewList() {
-  const items = S.index || [], f = FILTRY.find(x => x[0] === ui.filtr) || FILTRY[1];
+  const items = idxItems(), f = FILTRY.find(x => x[0] === ui.filtr) || FILTRY[1];
   const banner = S.needLogin ? `<div class="banner"><span>Přihlášení ke Google vypršelo – data jsou z ${S.at ? ago(S.at) : 'minula'}.</span><button class="sm" data-a="login">Přihlásit</button></div>`
     : S.error && S.error !== 'offline' && S.error !== 'empty' ? `<div class="banner"><span>${esc(S.error)}</span><button class="sm" data-a="sync-retry">Zkusit znovu</button></div>`
     : S.running && !S.at ? `<div class="banner"><span>První stažení trvá asi minutu – nechte aplikaci otevřenou. Když ji zavřete, příště naváže tam, kde skončila.</span></div>`
@@ -314,37 +318,43 @@ function tabAnalyza(d) {
 }
 // Poznámky z editoru rozšíření: jen povolené značky, odkazy http(s)/mailto
 function safeHtml(html) {
-  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html'), OK = /^(B|STRONG|I|EM|U|S|STRIKE|H3|UL|OL|LI|P|BR|DIV|A|BLOCKQUOTE|SPAN)$/;
-  const walk = n => { for (const c of [...n.childNodes]) { if (c.nodeType === 1) { if (!OK.test(c.tagName)) { c.replaceWith(...c.childNodes); continue; } for (const a of [...c.attributes]) if (!(c.tagName === 'A' && a.name === 'href' && /^(https?:|mailto:)/i.test(a.value))) c.removeAttribute(a.name); if (c.tagName === 'A') { c.target = '_blank'; c.rel = 'noopener'; } walk(c); } else if (c.nodeType !== 3) c.remove(); } };
+  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html'), OK = /^(B|STRONG|I|EM|U|S|STRIKE|H3|H4|UL|OL|LI|P|BR|DIV|A|BLOCKQUOTE|SPAN)$/;
+  // povolené atributy: odkaz (http, https, mailto), značka obrázku z rozšíření (data-nimg, data-w – obrázek je jen v počítači)
+  const keep = (c, a) => (c.tagName === 'A' && a.name === 'href' && /^(https?:|mailto:)/i.test(a.value)) || (c.tagName === 'SPAN' && (a.name === 'data-nimg' && /^\d+:n\d+$/.test(a.value) || a.name === 'data-w' && /^\d+$/.test(a.value)));
+  const walk = n => { for (const c of [...n.childNodes]) { if (c.nodeType === 1) { if (!OK.test(c.tagName)) { c.replaceWith(...c.childNodes); continue; } for (const a of [...c.attributes]) if (!keep(c, a)) c.removeAttribute(a.name); if (c.tagName === 'A') { c.target = '_blank'; c.rel = 'noopener'; } walk(c); } else if (c.nodeType !== 3) c.remove(); } };
   walk(doc.body.firstChild);
   return doc.body.firstChild.innerHTML;
 }
+const fmtT = t => t ? new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 function tabPoznamky(d) {
-  const out = [];
-  if (d.poznamky) out.push(`<div class="box"><h3>Poznámky <small>${d.poznamky.at ? dat(d.poznamky.at) : ''}</small></h3><div class="notes">${d.poznamky.html ? safeHtml(d.poznamky.html) : esc(d.poznamky.text).replace(/\n/g, '<br>')}</div></div>`);
+  const out = [], P = d.poznamky;
+  out.push(`<div class="box"><h3>Poznámky <small>${P && P.at ? fmtT(P.at) : ''}${P && P.local ? ' · ⇡ čeká na odeslání' : ''}</small></h3>${P ? `<div class="notes">${P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')}</div>` : '<p class="muted">Zatím bez poznámek.</p>'}
+    <a class="rowlink in" href="#/n/${d.id}/poznamky">${P ? 'Upravit poznámky' : '+ Napsat poznámku'}</a></div>`);
+  out.push(`<div class="box"><h3>Měření hluku <button class="sm" data-a="meas-add">+ Přidat</button></h3>${(d.mereni || []).length ? `<div class="items">${d.mereni.slice().sort((a, b) => String(b.t).localeCompare(String(a.t))).map(m => `<div class="it row"><span><b class="db" style="background:${dbCol(m.db)}">${esc(m.db)}</b>${esc(m.misto || 'místo neuvedeno')}${m.t ? ` · ${fmtT(m.t)}` : ''}${m.local ? ' <span class="loc">⇡</span>' : ''}</span><button class="x" data-a="meas-del" data-t="${esc(m.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Hodnotu z měřicí aplikace zapíšete tlačítkem Přidat. Měření mikrofonem telefonu přibude v další etapě.</p>'}</div>`);
   if ((d.prilohy || []).length) out.push(`<div class="box"><h3>Přílohy</h3><div class="items">${d.prilohy.map(a => `<div class="it"><b>·</b><span>${esc(a.name)} <span class="muted">${a.size ? Math.round(a.size / 1024).toLocaleString('cs-CZ') + ' kB' : ''}</span></span></div>`).join('')}</div><p class="muted">Soubory příloh jsou zatím jen v rozšíření v počítači.</p></div>`);
-  if ((d.mereni || []).length) out.push(`<div class="box"><h3>Měření hluku</h3><div class="items">${d.mereni.map(m => `<div class="it"><span><b class="db" style="background:${dbCol(m.db)}">${esc(m.db)}</b>${esc(m.misto || 'místo neuvedeno')}${m.t ? ` · ${new Date(m.t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}</span></div>`).join('')}</div></div>`);
-  return out.join('') || '<div class="empty">K nabídce zatím nejsou poznámky. Psát je půjde i v telefonu v další etapě.</div>';
+  return out.join('');
 }
 function tabPostup(d) {
   const p = d.postup || {}, an = d.analyza, st = [];
-  const step = (ok, now, title, sub, extra) => st.push({ ok, now, title, sub, extra });
+  const step = (ok, now, title, sub, extra, del) => st.push({ ok, now, title, sub, extra, del });
   if (d.fav && d.fav.od) step(true, false, d.vlastni ? 'Přidáno do archivu' : 'Uloženo z inzerátu', dat(d.fav.od));
   if (an) step(true, false, 'Analýza hotová', an.ko.length ? 'KO' : `Skóre ${sc(an.skore)}${an.verdikt ? ' · ' + an.verdikt.slice(0, 60) : ''}`);
-  for (const x of (p.prohlidky || []).slice().sort((a, b) => String(a.datum).localeCompare(String(b.datum)))) {
-    const fut = x.datum >= today();
-    step(!fut, fut, fut ? 'Prohlídka naplánována' : 'Prohlídka', [dat(x.datum), x.dojem ? `dojem ${x.dojem}/5` : ''].filter(Boolean).join(' · '), x.pozn);
+  for (const x of (p.prohlidky || []).slice().sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || ''))))) {
+    const fut = upcoming(x);
+    step(!fut, fut, fut ? 'Prohlídka naplánována' : 'Prohlídka', [dat(x.datum) + (x.cas ? ' v ' + x.cas : ''), x.dojem ? `dojem ${x.dojem}/5` : ''].filter(Boolean).join(' · '), x.pozn, { k: 'prohlidka', m: { id: x.id, datum: x.datum, pozn: x.pozn || '' }, local: x.local });
   }
-  for (const x of p.jednani || []) step(true, false, 'Jednání o ceně', [dat(x.datum), x.nabidka ? 'nabídka ' + kc(x.nabidka) : '', x.proti ? 'protinabídka ' + kc(x.proti) : ''].filter(Boolean).join(' · '), x.vysledek);
+  for (const x of p.jednani || []) step(true, false, 'Jednání o ceně', [dat(x.datum), x.nabidka ? 'nabídka ' + kc(x.nabidka) : '', x.proti ? 'protinabídka ' + kc(x.proti) : ''].filter(Boolean).join(' · '), x.vysledek, { k: 'jednani', m: { id: x.id, datum: x.datum, pozn: x.pozn || '', nabidka: x.nabidka || null }, local: x.local });
   if (p.konecna && p.konecna.cena) step(true, false, 'Konečná cena', [kc(p.konecna.cena), dat(p.konecna.datum), p.konecna.zdroj].filter(Boolean).join(' · '));
-  const out = [];
-  if (p.stav && STAVY[p.stav]) out.push(`<div class="box"><h3>Stav</h3><div class="big">${esc(STAVY[p.stav])}</div>${p.duvod ? `<p>${esc(p.duvod)}</p>` : ''}${p.stavAt ? `<p class="muted">Změněno ${dat(p.stavAt)}</p>` : ''}</div>`);
-  if (st.length) out.push(`<div class="box tl">${st.map((s, i) => `<div class="st"><div><span class="dot${s.ok ? ' ok' : s.now ? ' now' : ''}">${s.ok ? I.ok : ''}</span>${i < st.length - 1 ? `<span class="ln${s.ok ? ' ok' : ''}"></span>` : ''}</div><div class="tx"><b>${esc(s.title)}</b><div>${esc(s.sub || '')}</div>${s.extra ? `<div>${esc(s.extra)}</div>` : ''}</div></div>`).join('')}</div>`);
+  const out = [`<div class="box"><h3>Stav${p.stavAt ? ` <small>změněno ${dat(p.stavAt)}</small>` : ''}</h3>
+    <select class="field" data-a="stav">${[['', '– bez stavu –'], ...Object.entries(STAVY)].map(([v, l]) => `<option value="${v}"${(p.stav || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+    <input class="field" style="margin-top:8px" data-a="duvod" value="${esc(p.duvod || '')}" placeholder="důvod / poznámka (např. proč odmítnuto)"></div>`];
+  if (st.length) out.push(`<div class="box tl">${st.map((s, i) => `<div class="st"><div><span class="dot${s.ok ? ' ok' : s.now ? ' now' : ''}">${s.ok ? I.ok : ''}</span>${i < st.length - 1 ? `<span class="ln${s.ok ? ' ok' : ''}"></span>` : ''}</div><div class="tx"><b>${esc(s.title)}${s.del && s.del.local ? ' <span class="loc">⇡</span>' : ''}</b><div>${esc(s.sub || '')}</div>${s.extra ? `<div>${esc(s.extra)}</div>` : ''}</div>${s.del ? `<button class="x" data-a="pst-del" data-k="${s.del.k}" data-m="${esc(JSON.stringify(s.del.m))}" aria-label="Smazat">×</button>` : ''}</div>`).join('')}</div>`);
+  out.push(`<div class="btns"><button class="sm" data-a="pr-add">+ Prohlídka</button><button class="sm" data-a="jd-add">+ Jednání o ceně</button><button class="sm" data-a="kc-set">Konečná cena</button></div>`);
   if ((d.zmeny || []).length) out.push(`<details class="box"><summary>Změny inzerátu</summary><div class="items">${d.zmeny.slice().reverse().map(c => `<div class="it"><b>·</b><span>${dat(c.t)} ${esc(c.co)}: <span class="muted">${esc(c.old || '–')}</span> → ${esc(c.new || '–')}</span></div>`).join('')}</div></details>`);
-  return out.join('') || '<div class="empty">Zatím bez záznamů.</div>';
+  return out.join('');
 }
 async function viewDetail(id, tab) {
-  const d = await DB.get('docs', id), it = (S.index || []).find(x => x.id === id);
+  const d = await getDoc(id), it = (S.index || []).find(x => x.id === id);
   if (!d) return `<div class="scr"><div class="top"><button class="ibtn" data-a="back" aria-label="Zpět">${I.back}</button></div><div class="empty">${S.running ? 'Nabídka se ještě stahuje…' : 'Nabídka není v telefonu.'}</div></div>`;
   tab = TABS.some(t => t[0] === tab) ? tab : 'prehled';
   const an = d.analyza, ko = an && an.ko.length > 0, v = an && an.skore;
@@ -357,6 +367,8 @@ async function viewDetail(id, tab) {
     ${d.url ? `<div class="bottom"><a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">${d.vlastni ? 'Stránka nabídky' : 'Inzerát na Sreality'} ${I.ext}</a></div>` : ''}</div>`;
 }
 function wireDetail(root, id) {
+  const st = root.querySelector('[data-a=stav]'), du = root.querySelector('[data-a=duvod]');
+  if (st) { const save = () => queueOp({ nid: id, op: 'postup.stav', stav: st.value, duvod: du.value.trim() }).then(() => render()); st.addEventListener('change', save); du.addEventListener('change', save); }
   root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { history.replaceState(null, '', `#/n/${id}?t=${b.dataset.tab}`); const tabs = root.querySelector('.tabs'), y = window.scrollY, top = tabs.getBoundingClientRect().top + y; render().then(() => window.scrollTo(0, Math.min(y, top))); }));
 }
 async function viewReport(id) {
@@ -366,12 +378,12 @@ async function viewReport(id) {
 }
 function viewProhlidky() {
   const all = [];
-  for (const it of S.index || []) for (const p of it.prohlidky || []) if (p.datum) all.push({ it, p });
-  const fut = all.filter(x => x.p.datum >= today()).sort((a, b) => a.p.datum.localeCompare(b.p.datum));
-  const past = all.filter(x => x.p.datum < today()).sort((a, b) => b.p.datum.localeCompare(a.p.datum));
-  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div></div></a>`; };
-  return `<div class="scr"><div class="top"><div data-pill>${syncPill()}</div></div><h1 class="h1">Prohlídky</h1>
-    <div class="sec"><h2>Naplánované</h2><span>${fut.length}</span></div><div class="list">${fut.map(row).join('') || '<div class="empty">Žádná naplánovaná prohlídka. Prohlídku zapíšete v rozšíření v záložce Můj postup.</div>'}</div>
+  for (const it of idxItems()) for (const p of it.prohlidky || []) if (p.datum) all.push({ it, p });
+  const fut = all.filter(x => upcoming(x.p)).sort((a, b) => a.p.datum.localeCompare(b.p.datum));
+  const past = all.filter(x => !upcoming(x.p)).sort((a, b) => b.p.datum.localeCompare(a.p.datum));
+  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}?t=postup"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div></div></a>`; };
+  return `<div class="scr"><div class="top"><div data-pill>${syncPill()}</div></div><div class="top"><h1 class="h1">Prohlídky</h1><button class="sm pri" data-a="plan">+ Naplánovat</button></div>
+    <div class="sec"><h2>Naplánované</h2><span>${fut.length}</span></div><div class="list">${fut.map(row).join('') || '<div class="empty">Žádná naplánovaná prohlídka.</div>'}</div>
     ${past.length ? `<div class="sec"><h2>Proběhlé</h2><span>${past.length}</span></div><div class="list">${past.map(row).join('')}</div>` : ''}</div>${nav('prohlidky')}`;
 }
 function viewMapa() {
@@ -390,12 +402,15 @@ async function viewNastaveni() {
       <div class="r"><span class="k">${conn ? (token() ? 'Připojeno' : 'Přihlášení vypršelo') : 'Nepřipojeno'}<small>skrytá složka aplikace${S.at ? ` · synchronizováno ${ago(S.at)}` : ''}${S.serverAt ? ` · rozšíření odeslalo ${ago(new Date(S.serverAt).getTime())}` : ''}</small></span>${conn && token() ? `<button class="sm" data-a="sync-now">Synchronizovat</button>` : `<button class="sm" data-a="login">Přihlásit</button>`}</div>
       <div class="r"><span class="k">V telefonu uloženo</span><span class="v">${n} nabídek${est && est.usage ? ` · ${(est.usage / 1048576).toLocaleString('cs-CZ', { maximumFractionDigits: 0 })} MB` : ''}</span></div>
     </div>
+    <div class="grp-h">Odesílání do počítače</div>
+    <div class="rows"><div class="r"><span class="k">Poznámky, měření, Můj postup<small>Odcházejí hned, i přes mobilní data (jednotky kB). Bez signálu počkají v telefonu.</small></span></div>
+      <div class="r" data-outbox>${outboxRow()}</div></div>
     ${standalone ? '' : `<div class="grp-h">Na plochu</div><div class="rows"><div class="r"><span class="k">${ios ? 'V Safari klepněte na Sdílet → Přidat na plochu' : installEvt ? 'Nainstalovat aplikaci' : 'V Chrome otevřete ⋮ → Instalovat aplikaci'}<small>Aplikace se pak otevírá jako samostatná a funguje i offline.</small></span>${installEvt ? '<button class="sm" data-a="install">Instalovat</button>' : ''}</div></div>`}
     <div class="grp-h">Přihlašovací klient</div>
     <input class="field" data-a="client" value="${esc(clientId())}" placeholder="ID klienta Google" spellcheck="false" autocomplete="off">
     <p class="hint">Stejné ID jako v rozšíření (Nastavení → Telefon). Není to heslo – je veřejné.</p>
     <div style="margin-top:22px"><button class="btn danger" style="width:100%" data-a="wipe">Odpojit Google účet a smazat data z telefonu</button></div>
-    <p class="hint">Verze ${APP_V} · etapa 1 (čtení). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
+    <p class="hint">Verze ${APP_V} · etapa 2 (čtení a zápisy). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
   </div>${nav('nastaveni')}`;
 }
 function viewIntro() {
@@ -409,24 +424,242 @@ function viewIntro() {
     <p class="hint">Napřed v rozšíření v počítači otevřete Nastavení → Telefon a připojte Google Drive – odtud aplikace data stáhne. Návod: soubor NAVOD.md.</p></div>`;
 }
 
+// ---------- zápisy z telefonu ----------
+// Změny se hned projeví v telefonu (překryjí stažená data) a odešlou se do Drive jako zmeny-ČAS-ZAŘÍZENÍ.json; rozšíření
+// je při příštím odeslání zpracuje (nejpozději do 5 min, když je počítač zapnutý) a zapíše do index.json (applied).
+const DEV = LS.get('dev') || (() => { const d = Math.random().toString(36).slice(2, 8); LS.set('dev', d); return d; })();
+const OB = { pending: [], sent: [] };
+async function loadOutbox() { const o = await DB.get('meta', 'outbox'); if (o) { OB.pending = o.pending || []; OB.sent = o.sent || []; } }
+const saveOutbox = () => DB.put('meta', 'outbox', { pending: OB.pending, sent: OB.sent });
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+async function queueOp(o) {
+  o = Object.assign({ cid: newId(), at: new Date().toISOString() }, o);
+  if (o.op === 'notes.set' || o.op === 'postup.stav') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // jen poslední verze
+  OB.pending.push(o);
+  await saveOutbox();
+  flushSoon();
+}
+let flushT = null;
+const flushSoon = (ms = 1500) => { clearTimeout(flushT); flushT = setTimeout(() => flush(), ms); };
+async function flush(manual) {
+  if (!OB.pending.length || S.flushing) return drawOutbox();
+  if (!navigator.onLine || !token()) { if (manual && !token()) syncNow(true); return drawOutbox(); }
+  S.flushing = true; drawOutbox();
+  const ops = OB.pending.slice(), name = `zmeny-${Date.now()}-${DEV}.json`;
+  try {
+    await apiUpload(name, JSON.stringify({ device: DEV, at: new Date().toISOString(), ops }));
+    OB.pending = OB.pending.filter(x => !ops.includes(x)); OB.sent.push({ file: name, ops, at: Date.now() });
+    await saveOutbox();
+  } catch (e) { if (e instanceof NeedLogin) S.needLogin = true; } finally { S.flushing = false; drawOutbox(); }
+}
+async function apiUpload(name, body) {
+  const t = token();
+  if (!t) throw new NeedLogin('Přihlášení vypršelo');
+  const b = 'rai' + newId();
+  const r = await fetch(apiBase() + '/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', headers: { Authorization: 'Bearer ' + t, 'Content-Type': `multipart/related; boundary=${b}` },
+    body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ['appDataFolder'] })}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${b}--` });
+  if (r.status === 401) { LS.del('token'); throw new NeedLogin('Přihlášení vypršelo'); }
+  if (!r.ok) throw new Error(`Google Drive ${r.status}`);
+}
+function outboxRow() {
+  const n = OB.pending.length, w = OB.sent.length;
+  if (S.flushing) return `<span class="k">Odesílám…</span>`;
+  if (n) return `<span class="k">Čeká na odeslání: ${n} ${n === 1 ? 'změna' : n < 5 ? 'změny' : 'změn'}<small>${navigator.onLine ? (token() ? 'odešle se za chvíli' : 'po přihlášení') : 'bez signálu – odešle se po připojení'}</small></span><button class="sm" data-a="flush">Odeslat teď</button>`;
+  if (w) return `<span class="k">Odesláno<small>${w} ${w === 1 ? 'dávka čeká' : 'dávky čekají'}, až je rozšíření v počítači zpracuje (do 5 min, když je počítač zapnutý)</small></span>`;
+  return `<span class="k">Vše odesláno</span>`;
+}
+function drawOutbox() { const r = document.querySelector('[data-outbox]'); if (r) r.innerHTML = outboxRow(); }
+addEventListener('online', () => flushSoon(500));
+
+// překrytí stažených dat vlastními změnami (dokud je rozšíření nezpracuje)
+const myOps = nid => OB.sent.flatMap(x => x.ops).concat(OB.pending).filter(o => o.nid === nid);
+const sameItem = (x, m) => m && ((m.id && x.id === m.id) || (!m.id && x.datum === m.datum && (x.pozn || '') === (m.pozn || '') && (x.nabidka || null) === (m.nabidka || null)));
+function applyLocal(d, o) {
+  const p = d.postup = Object.assign({ prohlidky: [], jednani: [] }, d.postup || {});
+  p.prohlidky = (p.prohlidky || []).slice(); p.jednani = (p.jednani || []).slice();
+  const add = (k, it) => { if (!p[k].some(x => it.id && x.id === it.id)) p[k].push(Object.assign({ local: true }, it)); };
+  const del = (k, m) => { const i = p[k].findIndex(x => sameItem(x, m)); if (i >= 0) p[k].splice(i, 1); };
+  if (o.op === 'notes.set') d.poznamky = { html: o.html, text: o.text, at: o.at, local: true };
+  else if (o.op === 'mereni.add') { d.mereni = (d.mereni || []).slice(); if (!d.mereni.some(x => x.t === o.item.t)) d.mereni.push(Object.assign({ local: true }, o.item)); }
+  else if (o.op === 'mereni.del') d.mereni = (d.mereni || []).filter(x => x.t !== o.t);
+  else if (o.op === 'postup.stav') { p.stav = o.stav; p.duvod = o.duvod; p.stavAt = o.at; }
+  else if (o.op === 'prohlidka.add') add('prohlidky', o.item);
+  else if (o.op === 'prohlidka.del') del('prohlidky', o.match);
+  else if (o.op === 'jednani.add') add('jednani', o.item);
+  else if (o.op === 'jednani.del') del('jednani', o.match);
+  else if (o.op === 'konecna.set') p.konecna = o.konecna;
+  return d;
+}
+async function getDoc(id) { const d = await DB.get('docs', id); if (!d) return d; const ops = myOps(id); return ops.length ? ops.reduce(applyLocal, JSON.parse(JSON.stringify(d))) : d; }
+// souhrny v seznamu (stav, prohlídky) podle vlastních změn
+function idxItems() {
+  const items = S.index || [];
+  if (!OB.pending.length && !OB.sent.length) return items;
+  return items.map(it => { const ops = myOps(it.id).filter(o => /^(postup\.stav|prohlidka\.)/.test(o.op)); if (!ops.length) return it;
+    const d = ops.reduce(applyLocal, { postup: { stav: it.stav, prohlidky: (it.prohlidky || []).slice(), jednani: [] } });
+    return Object.assign({}, it, { stav: d.postup.stav, prohlidky: d.postup.prohlidky }); });
+}
+
+// spodní list s formulářem
+function sheet(title, body, onOk, okLabel = 'Uložit') {
+  const el = document.createElement('div');
+  el.className = 'shbg';
+  el.innerHTML = `<div class="sh" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="shh"><b>${esc(title)}</b><button type="button" class="ibtn" data-x aria-label="Zavřít">×</button></div><form class="shb" novalidate>${body}<button class="btn pri" type="submit">${okLabel}</button></form></div>`;
+  document.body.appendChild(el);
+  const close = () => el.remove();
+  el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-x]')) close(); });
+  el.querySelectorAll('.chips2 button').forEach(b => b.addEventListener('click', () => { const g = b.parentElement; g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b && !x.classList.contains('on') ? true : false)); const inp = el.querySelector(`[name="${g.dataset.name}"]`); if (inp) inp.value = b.classList.contains('on') ? b.dataset.v : ''; }));
+  el.querySelector('form').addEventListener('submit', async e => { e.preventDefault(); const v = Object.fromEntries(new FormData(e.target)); const err = await onOk(v, el); if (err) { const p = el.querySelector('.sherr') || el.querySelector('.shb').insertAdjacentElement('afterbegin', Object.assign(document.createElement('p'), { className: 'sherr err' })); p.textContent = err; return; } close(); render(); });
+  setTimeout(() => { const f = el.querySelector('input:not([type=hidden]), select'); if (f && f.dataset.focus) f.focus(); }, 50);
+  return el;
+}
+const MISTA = ['ložnice, okna zavřená', 'ložnice, okna otevřená', 'obývák', 'balkon', 'venku před domem', 'dvůr'];
+const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+const numKc = v => { const n = Number(String(v || '').replace(/[^\d]/g, '')); return n || null; };
+const ACTIONS = {
+  'meas-add': () => { const id = route().id; sheet('Měření hluku', `<label class="lbl">Hodnota (dB)</label><input class="field big" name="db" type="number" inputmode="decimal" min="10" max="130" step="0.1" data-focus="1" placeholder="např. 42">
+      <label class="lbl">Kde</label><div class="chips2" data-name="misto">${MISTA.map(m => `<button type="button" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div>
+      <input class="field" name="misto" placeholder="nebo vlastní popis"><label class="lbl">Kdy</label><input class="field" name="t" type="datetime-local" value="${nowLocal()}">`,
+    v => { const db = Number(String(v.db).replace(',', '.')); if (!(db >= 10 && db <= 130)) return 'Zadejte hodnotu v dB (10–130).';
+      return void queueOp({ nid: id, op: 'mereni.add', item: { db: Math.round(db * 10) / 10, misto: v.misto.trim(), t: v.t ? new Date(v.t).toISOString() : new Date().toISOString() } }); }, 'Přidat měření'); },
+  'meas-del': a => { if (confirm('Smazat toto měření?')) queueOp({ nid: route().id, op: 'mereni.del', t: a.dataset.t }).then(render); },
+  'pst-del': a => { if (confirm('Smazat tento záznam?')) queueOp({ nid: route().id, op: a.dataset.k + '.del', match: JSON.parse(a.dataset.m) }).then(render); },
+  'pr-add': () => planSheet(route().id),
+  'plan': () => planSheet(null),
+  'jd-add': () => { const id = route().id; sheet('Jednání o ceně', `<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${today()}">
+      <label class="lbl">Moje nabídka (Kč)</label><input class="field" name="nabidka" inputmode="numeric"><label class="lbl">Protinabídka (Kč)</label><input class="field" name="proti" inputmode="numeric">
+      <label class="lbl">Výsledek</label><input class="field" name="vysledek">`, v => { if (!numKc(v.nabidka) && !numKc(v.proti) && !v.vysledek.trim()) return 'Vyplňte nabídku, protinabídku nebo výsledek.';
+      return void queueOp({ nid: id, op: 'jednani.add', item: { id: newId(), datum: v.datum, nabidka: numKc(v.nabidka), proti: numKc(v.proti), vysledek: v.vysledek.trim() } }); }); },
+  'kc-set': async () => { const id = route().id, d = await getDoc(id), k = (d.postup || {}).konecna || {};
+    sheet('Konečná cena', `<p class="muted">Za kolik se byt prodal (např. z Atlasu cen nebo katastru) – zpřesní srovnání cen v okolí.</p><label class="lbl">Cena (Kč)</label><input class="field" name="cena" inputmode="numeric" value="${k.cena || ''}">
+      <label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${esc(k.datum || '')}"><label class="lbl">Zdroj</label><input class="field" name="zdroj" value="${esc(k.zdroj || '')}" placeholder="Atlas cen, katastr, makléř…">`,
+    v => void queueOp({ nid: id, op: 'konecna.set', konecna: numKc(v.cena) ? { cena: numKc(v.cena), datum: v.datum, zdroj: v.zdroj.trim() } : null })); }
+};
+// Prohlídka: u nabídky (id) nebo s výběrem nabídky (Prohlídky → Naplánovat)
+function planSheet(id) {
+  const items = idxItems().filter(it => it.ulozeno !== false || it.vlastni);
+  const pick = id ? '' : `<label class="lbl">Nabídka</label><input class="field" data-a="plan-q" placeholder="Hledat ulici, čtvrť…" autocomplete="off"><div class="pick" data-pick>${pickList(items, '')}</div><input type="hidden" name="nid">`;
+  const el = sheet(id ? 'Prohlídka' : 'Naplánovat prohlídku', `${pick}<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${today()}">
+    <label class="lbl">Čas (nepovinné)</label><input class="field" name="cas" type="time"><label class="lbl">Dojem (po prohlídce)</label><div class="chips2" data-name="dojem">${[1, 2, 3, 4, 5].map(n => `<button type="button" data-v="${n}">${n}</button>`).join('')}</div><input type="hidden" name="dojem">
+    <label class="lbl">Poznámka</label><input class="field" name="pozn" placeholder="co jste zjistil (hluk, světlo, sousedé, stav…)">`,
+  async v => { const nid = id || +v.nid; if (!nid) return 'Vyberte nabídku.'; if (!v.datum) return 'Zadejte datum.';
+    await queueOp({ nid, op: 'prohlidka.add', item: { id: newId(), datum: v.datum, cas: v.cas || '', dojem: +v.dojem || null, pozn: v.pozn.trim() } });
+    // budoucí prohlídka posune stav na „Prohlídka domluvena“, jen když nabídka ještě žádný pokročilejší stav nemá
+    const it = idxItems().find(x => x.id === nid);
+    if ((v.datum > today() || (v.datum === today() && !v.dojem)) && it && (!it.stav || it.stav === 'zajimavy')) await queueOp({ nid, op: 'postup.stav', stav: 'prohlidka', duvod: '' }); }, id ? 'Uložit' : 'Naplánovat');
+  if (!id) {
+    const q = el.querySelector('[data-a=plan-q]'), box = el.querySelector('[data-pick]'), hid = el.querySelector('[name=nid]');
+    q.addEventListener('input', () => { box.innerHTML = pickList(items, q.value); });
+    box.addEventListener('click', e => { const b = e.target.closest('[data-id]'); if (!b) return; hid.value = b.dataset.id; box.querySelectorAll('[data-id]').forEach(x => x.classList.toggle('on', x === b)); });
+  }
+}
+function pickList(items, q) {
+  const w = norm(q).trim().split(/\s+/).filter(Boolean);
+  const l = items.filter(it => w.every(x => (it.q || '').includes(x) || norm(titleOf(it) + ' ' + placeOf(it)).includes(x))).slice(0, 30);
+  return l.map(it => `<button type="button" data-id="${it.id}"><b>${esc(placeOf(it) || titleOf(it))}</b><span>${esc(titleOf(it))} · ${kc(it.cena)}</span></button>`).join('') || '<p class="muted">Nic neodpovídá.</p>';
+}
+
+// ---------- editor poznámek (jako v rozšíření) ----------
+const TB = [['bold', 'B', 'Tučně', 'font-weight:800'], ['italic', 'I', 'Kurzíva', 'font-style:italic'], ['underline', 'U', 'Podtržení', 'text-decoration:underline'], ['strikeThrough', 'S', 'Přeškrtnutí', 'text-decoration:line-through'], '|',
+  ['h3', 'H', 'Nadpis', 'font-weight:800'], ['insertUnorderedList', '•', 'Odrážky'], ['insertOrderedList', '1.', 'Číslování'], ['outdent', '⇤', 'Zmenšit odsazení'], ['indent', '⇥', 'Odsadit'], '|',
+  ['link', '🔗', 'Odkaz'], ['removeFormat', 'T̸', 'Zrušit formátování']];
+async function viewNotes(id) {
+  const d = await getDoc(id);
+  if (!d) return `<div class="scr"><div class="top"><button class="ibtn" data-a="back" aria-label="Zpět">${I.back}</button></div><div class="empty">Nabídka není v telefonu.</div></div>`;
+  const P = d.poznamky;
+  return `<div class="rp-top"><button class="ibtn" data-a="back" aria-label="Zpět">${I.back}</button><b>Poznámky · ${esc(placeOf(d.lokalita) || titleOf(d))}</b><span class="nst" data-nst></span></div>
+    <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<i></i>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}"${t[3] ? ` style="${t[3]}"` : ''}>${t[1]}</button>`).join('')}</div>
+    <div class="ned notes" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div>
+    <p class="hint" style="margin:8px 20px">Ukládá se průběžně v telefonu a odešle se do počítače. Obrázky z počítače jsou tu jen jako značka.</p>`;
+}
+// text pro AI: stejný Markdown jako v rozšíření (odrážky, ### nadpisy, **tučně**, _kurzíva_, text (odkaz), [obrázek N])
+function noteText(ed) {
+  let i = 0;
+  const inl = n => [...n.childNodes].map(x => {
+    if (x.nodeType === 3) return x.textContent;
+    if (x.nodeType !== 1) return '';
+    const t = x.tagName;
+    if (t === 'BR') return '\n';
+    if (t === 'SPAN' && x.dataset.nimg) return ` [obrázek ${++i}] `;
+    if (/^(UL|OL|P|DIV|H3|H4|BLOCKQUOTE)$/.test(t)) return '\n' + blk(x, 0) + '\n';
+    const c = inl(x);
+    if (!c.trim()) return c;
+    const [, l, core, r] = c.match(/^(\s*)([\s\S]*?)(\s*)$/), w = m => l + m + core + m + r; // mezery mimo značky (**tučně** text)
+    if (t === 'B' || t === 'STRONG') return w('**');
+    if (t === 'I' || t === 'EM') return w('_');
+    if (t === 'S' || t === 'STRIKE') return w('~~');
+    if (t === 'A') { const h = x.getAttribute('href') || ''; return c.trim() === h ? h : `${c} (${h})`; }
+    return c;
+  }).join('');
+  const list = (el, d) => { let k = 0; return [...el.children].map(li => {
+    if (li.tagName === 'UL' || li.tagName === 'OL') return list(li, d + 1);
+    if (li.tagName !== 'LI') return '';
+    const sub = [...li.children].filter(x => x.tagName === 'UL' || x.tagName === 'OL');
+    const own = li.cloneNode(true); own.querySelectorAll(':scope > ul, :scope > ol').forEach(x => x.remove());
+    return '  '.repeat(d) + (el.tagName === 'OL' ? `${++k}. ` : '- ') + inl(own).replace(/\n+/g, ' ').trim() + sub.map(x => '\n' + list(x, d + 1)).join('');
+  }).filter(Boolean).join('\n'); };
+  const blk = (el, d) => { const t = el.tagName; if (t === 'UL' || t === 'OL') return list(el, d); if (t === 'H3' || t === 'H4') return '### ' + inl(el).trim(); if (t === 'BLOCKQUOTE') return blk2(el).split('\n').map(l => l ? '> ' + l : l).join('\n'); return inl(el); };
+  const blk2 = el => [...el.childNodes].map(x => x.nodeType === 1 && /^(UL|OL|H3|H4|BLOCKQUOTE|P|DIV)$/.test(x.tagName) ? '\n' + blk(x, 0) + '\n' : inl({ childNodes: [x] })).join('');
+  return blk2(ed).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function wireNotes(root, id) {
+  const ed = root.querySelector('[data-ned]'), st = root.querySelector('[data-nst]');
+  if (!ed) return;
+  ed.querySelectorAll('span[data-nimg]').forEach(x => x.setAttribute('contenteditable', 'false'));
+  let base = null, dirty = false, t = null;
+  DB.get('docs', id).then(raw => { base = raw && raw.poznamky ? raw.poznamky.at || null : null; });
+  const save = async () => {
+    clearTimeout(t); if (!dirty) return; dirty = false;
+    const html = safeHtml(ed.innerHTML), text = noteText(ed);
+    await queueOp({ nid: id, op: 'notes.set', html, text, base });
+    st.textContent = 'Uloženo v telefonu';
+  };
+  ed.addEventListener('input', () => { dirty = true; st.textContent = 'Píšu…'; clearTimeout(t); t = setTimeout(save, 1200); });
+  ed.addEventListener('blur', save);
+  const leave = () => { save(); removeEventListener('hashchange', leave); document.removeEventListener('visibilitychange', hide); };
+  const hide = () => { if (document.visibilityState === 'hidden') save(); };
+  addEventListener('hashchange', leave); document.addEventListener('visibilitychange', hide);
+  const sync = () => root.querySelectorAll('[data-cmd]').forEach(b => { let on = false; try { on = b.dataset.cmd === 'h3' ? /^h3$/i.test(document.queryCommandValue('formatBlock')) : ['bold', 'italic', 'underline', 'strikeThrough', 'insertUnorderedList', 'insertOrderedList'].includes(b.dataset.cmd) && document.queryCommandState(b.dataset.cmd); } catch (_) {} b.classList.toggle('on', !!on); });
+  // výběr v poli si pamatovat: na iPhonu klepnutí na tlačítko panelu kurzor z pole vezme a příkaz by se neprovedl
+  let range = null;
+  const keepSel = () => { const sl = getSelection(); if (sl.rangeCount && ed.contains(sl.anchorNode)) range = sl.getRangeAt(0).cloneRange(); sync(); };
+  const restore = () => { ed.focus(); const sl = getSelection(); if (range) { sl.removeAllRanges(); sl.addRange(range); } else if (!ed.contains(sl.anchorNode)) { const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sl.removeAllRanges(); sl.addRange(r); } };
+  document.addEventListener('selectionchange', keepSel);
+  addEventListener('hashchange', () => document.removeEventListener('selectionchange', keepSel), { once: true });
+  root.querySelectorAll('[data-cmd]').forEach(b => {
+    // příkaz už při dotyku (pointerdown s preventDefault – výběr v poli zůstane; Safari pak „click“ nevyšle), klávesnicí přes click
+    b.addEventListener('pointerdown', e => { e.preventDefault(); run(); });
+    b.addEventListener('click', e => { if (e.detail === 0) run(); });
+    function run() {
+      const c = b.dataset.cmd;
+      restore();
+      if (c === 'h3') document.execCommand('formatBlock', false, /^h3$/i.test(document.queryCommandValue('formatBlock')) ? 'div' : 'h3');
+      else if (c === 'link') { let u = prompt('Adresa odkazu (prázdné = odebrat)', 'https://'); if (u === null) return; u = u.trim(); if (!u || u === 'https://') document.execCommand('unlink'); else document.execCommand('createLink', false, /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(u) ? 'mailto:' + u : /^(https?:|mailto:)/i.test(u) ? u : 'https://' + u); }
+      else document.execCommand(c, false, null);
+      dirty = true; clearTimeout(t); t = setTimeout(save, 1200); sync();
+    }
+  });
+}
+
 // ---------- směrování a vykreslení ----------
 const scrollPos = new Map();
 let curKey = '', renderSeq = 0;
 function route() {
   const h = location.hash.replace(/^#\/?/, ''), [path, qs] = h.split('?'), p = path.split('/').filter(Boolean), q = new URLSearchParams(qs || '');
-  if (p[0] === 'n' && p[1]) return { v: p[2] === 'report' ? 'report' : 'detail', id: +p[1], tab: q.get('t') };
+  if (p[0] === 'n' && p[1]) return { v: p[2] === 'report' ? 'report' : p[2] === 'poznamky' ? 'notes' : 'detail', id: +p[1], tab: q.get('t') };
   return { v: ['mapa', 'prohlidky', 'nastaveni'].includes(p[0]) ? p[0] : 'list' };
 }
 async function render() {
   const seq = ++renderSeq, r = route(), key = r.v + (r.id || '');
   const html = !LS.get('connected') && !(S.index || []).length ? viewIntro()
-    : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id)
+    : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id) : r.v === 'notes' ? await viewNotes(r.id)
     : r.v === 'prohlidky' ? viewProhlidky() : r.v === 'mapa' ? viewMapa() : r.v === 'nastaveni' ? await viewNastaveni() : viewList();
   if (seq !== renderSeq) return;
   $app.innerHTML = html;
   wireThumbs($app);
   if (r.v === 'list' && $app.querySelector('[data-a=q]')) wireList($app);
   if (r.v === 'detail') wireDetail($app, r.id);
+  if (r.v === 'notes') wireNotes($app, r.id);
   setNav(html.startsWith('<div class="intro">') ? null : r.v === 'list' ? '' : ['mapa', 'prohlidky', 'nastaveni'].includes(r.v) ? r.v : null);
   if (key !== curKey) { curKey = key; window.scrollTo(0, scrollPos.get(key) || 0); }
   stickTabs();
@@ -442,7 +675,9 @@ $app.addEventListener('click', async e => {
   const a = e.target.closest('[data-a]');
   if (!a) return;
   const act = a.dataset.a;
-  if (act === 'back') { if (history.length > 1 && sessionStorage.getItem('rai-nav')) history.back(); else location.hash = route().v === 'report' ? `#/n/${route().id}` : '#/'; }
+  if (act === 'back') { if (history.length > 1 && sessionStorage.getItem('rai-nav')) history.back(); else location.hash = ['report', 'notes'].includes(route().v) ? `#/n/${route().id}${route().v === 'notes' ? '?t=poznamky' : ''}` : '#/'; }
+  else if (act in ACTIONS) ACTIONS[act](a);
+  else if (act === 'flush') flush(true);
   else if (act === 'sync' || act === 'sync-now' || act === 'sync-retry') syncNow(true);
   else if (act === 'login') { const c = $app.querySelector('[data-a=client]'); if (c && c.value.trim()) LS.set('clientId', c.value.trim()); if (!clientId()) { alert('Vložte ID klienta Google.'); return; } sessionStorage.setItem('rai-return', location.hash || '#/'); login(); }
   else if (act === 'install' && installEvt) { installEvt.prompt(); installEvt = null; }
@@ -450,7 +685,7 @@ $app.addEventListener('click', async e => {
     if (!confirm('Odpojit Google účet a smazat všechna data RealitAI z tohoto telefonu? Data v Google Drive a v počítači zůstanou.')) return;
     const t = token();
     if (t) fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(t), { method: 'POST', mode: 'no-cors' }).catch(() => {});
-    await DB.clear(); ['token', 'connected', 'ui'].forEach(LS.del); S.index = null; S.at = null; S.thumbs.clear(); location.hash = '#/'; render();
+    await DB.clear(); OB.pending = []; OB.sent = []; ['token', 'connected', 'ui'].forEach(LS.del); S.index = null; S.at = null; S.thumbs.clear(); location.hash = '#/'; render();
   }
 });
 $app.addEventListener('change', e => { if (e.target.dataset.a === 'client') LS.set('clientId', e.target.value.trim()); });
@@ -460,6 +695,7 @@ addEventListener('hashchange', () => sessionStorage.setItem('rai-nav', '1'));
   takeToken();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   await loadLocal();
+  await loadOutbox();
   await render();
   if (LS.get('connected')) syncNow();
   // při návratu do aplikace (po delší době) stáhnout změny
