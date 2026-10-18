@@ -1,13 +1,13 @@
 // Offline support: app files and fonts are cached and served from the cache without a connection. Offer data lives in
 // IndexedDB; requests to Google (sign-in, Drive API) always go to the network.
-const V = 'rai-1.4.0';
+const V = 'rai-1.6.0';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'md.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
   const r = e.request, u = new URL(r.url);
   if (r.method !== 'GET') return;
-  const own = u.origin === location.origin, font = /^fonts\.(googleapis|gstatic)\.com$/.test(u.hostname);
+  const own = u.origin === location.origin, font = /^(fonts\.(googleapis|gstatic)\.com|unpkg\.com)$/.test(u.hostname); // fonts and the map library
   if (!own && !font) return;
   // the page (also after returning from sign-in with #access_token) = index.html
   const key = own && r.mode === 'navigate' ? new Request(new URL('index.html', location.href).href) : r;

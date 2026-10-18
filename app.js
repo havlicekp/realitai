@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.4.0';
+const APP_V = '1.6.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -324,7 +324,6 @@ function tabPrehled(d, it) {
   const L = d.lokalitaData || {};
   if ((L.idx || []).length) out.push(`<div class="box"><h3>Lokalita v číslech <small>0–100, víc = lépe</small></h3>${bars(L.idx)}${d.lokalita.jenUlice ? '<p class="muted">Inzerát uvádí jen ulici – data o lokalitě jsou orientační.</p>' : ''}</div>`);
   if ((L.fakta || []).length) out.push(`<div class="box"><h3>Okolí</h3><div class="items">${L.fakta.map(t => `<div class="it"><b>·</b><span>${esc(t)}</span></div>`).join('')}</div></div>`);
-  if (d.popis) out.push(`<details class="box"><summary>Popis od makléře</summary><div class="desc">${esc(d.popis)}</div></details>`);
   if ((d.parametry || []).length) out.push(`<details class="box"><summary>Parametry</summary><dl class="params">${d.parametry.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`);
   if ((d.ceny || []).length > 1) out.push(`<details class="box"><summary>Vývoj ceny</summary><div class="items">${d.ceny.slice().reverse().map(x => `<div class="it"><b></b><span>${dat(x.t)} · <b>${kc(x.p)}</b></span></div>`).join('')}</div></details>`);
   return out.join('') || '<div class="empty">Bez údajů.</div>';
@@ -342,8 +341,8 @@ function tabAnalyza(d) {
   }
   if (an.kategorie.length) out.push(`<details class="box"><summary>Hodnocení podle kategorií</summary><div class="bars">${an.kategorie.map(k => `<div class="bar"><span>${esc(k.nazev)}</span><i><b class="${k.v == null ? '' : k.v < 2 ? 'q1' : k.v < 3 ? 'q2' : k.v < 3.5 ? 'q3' : k.v < 4 ? 'q4' : 'q5'}" style="width:${k.v == null ? 0 : k.v / 5 * 100}%"></b></i><b>${sc(k.v)}</b></div>${k.komentar ? `<div class="why">${esc(k.komentar)}</div>` : ''}`).join('')}</div></details>`);
   if (an.dokumenty.length) out.push(`<details class="box"><summary>Dokumenty k vyžádání</summary><div class="items">${an.dokumenty.map(t => `<div class="it"><b>·</b><span>${esc(t)}</span></div>`).join('')}</div></details>`);
-  if (an.md) out.push(`<a class="rowlink" href="#/n/${d.id}/report">Celý report analýzy ›</a>`);
-  return out.join('');
+  // full report inline (as in the extension panel) with a sticky "jump to section" picker
+  return `<div class="toc" data-toc-wrap hidden><select class="field" data-toc aria-label="Přejít na část analýzy"></select></div><div data-toc-top></div>${out.join('')}${an.md ? `<div class="box md rmd">${MD.render(an.md)}</div>` : ''}`;
 }
 // Notes from the extension editor: allowed tags only, http(s)/mailto links
 function safeHtml(html) {
@@ -377,7 +376,23 @@ async function viewDetail(id, tab) {
       <div class="panel">${body}</div></div>
     <div class="bottom">${d.url ? `<a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">Inzerát ${I.ext}</a>` : ''}<a class="btn pri" style="flex:1.6" href="#/n/${id}/prohlidka">${I.home}Prohlídka</a></div></div>`;
 }
+// Section picker: summary + report headings h1–h4 indented by level; shows the current section while scrolling
+function buildToc(root) {
+  const sel = root.querySelector('[data-toc]'); if (!sel) return;
+  const hs = [...root.querySelectorAll('.rmd h1, .rmd h2, .rmd h3, .rmd h4')].filter(h => h.textContent.trim());
+  const min = Math.min(...hs.map(h => +h.tagName[1]), 9), targets = [root.querySelector('[data-toc-top]'), ...hs];
+  sel.innerHTML = '<option value="" disabled selected hidden>Přejít na část…</option><option value="0">Souhrn a hodnocení</option>' +
+    hs.map((h, i) => `<option value="${i + 1}">${'\u00a0'.repeat((+h.tagName[1] - min) * 4)}${esc(h.textContent.trim().slice(0, 80))}</option>`).join('');
+  root.querySelector('[data-toc-wrap]').hidden = !hs.length;
+  const off = () => { const t = root.querySelector('.tabs'), w = root.querySelector('[data-toc-wrap]'); return (t ? t.offsetHeight : 0) + (w ? w.offsetHeight : 0) + 8; };
+  sel.onchange = () => { const t = targets[+sel.value]; if (t) window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - off(), behavior: 'smooth' }); };
+  let raf = 0;
+  const onScroll = () => { if (raf || !sel.isConnected) return; raf = requestAnimationFrame(() => { raf = 0; const top = off() + 4; let cur = -1; targets.forEach((t, i) => { if (t && t.getBoundingClientRect().top <= top) cur = i; }); if (cur >= 0 && sel.value !== String(cur)) sel.value = String(cur); }); };
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('hashchange', () => removeEventListener('scroll', onScroll), { once: true });
+}
 function wireDetail(root, id) {
+  buildToc(root);
   root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { history.replaceState(null, '', `#/n/${id}?t=${b.dataset.tab}`); const tabs = root.querySelector('.tabs'), y = window.scrollY, top = tabs.getBoundingClientRect().top + y; render().then(() => window.scrollTo(0, Math.min(y, top))); }));
 }
 async function viewReport(id) {
@@ -395,8 +410,90 @@ function viewProhlidky() {
     <div class="sec"><h2>Naplánované</h2><span>${fut.length}</span></div><div class="list">${fut.map(row).join('') || '<div class="empty">Žádná naplánovaná prohlídka.</div>'}</div>
     ${past.length ? `<div class="sec"><h2>Proběhlé</h2><span>${past.length}</span></div><div class="list">${past.map(row).join('')}</div>` : ''}</div>${nav('prohlidky')}`;
 }
+// ---------- map of offers (stage 5): offers by score, my noise measurements, Prague noise map at night ----------
+const MAPL = { css: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', js: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js' };
+let leafletP = null;
+const loadLeaflet = () => leafletP || (leafletP = new Promise((res, rej) => {
+  if (window.L) return res(window.L);
+  const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = MAPL.css; document.head.appendChild(l);
+  const sc = document.createElement('script'); sc.src = MAPL.js; sc.onload = () => res(window.L); sc.onerror = () => { leafletP = null; rej(new Error('leaflet')); }; document.head.appendChild(sc);
+}));
+const MAPLAY = [['off', 'Nabídky · skóre'], ['meas', 'Moje měření hluku'], ['noise', 'Hluková mapa v noci']];
+const mapPrefs = () => Object.assign({ off: true, meas: true, noise: false }, LS.get('mapLay') || {});
 function viewMapa() {
-  return `<div class="scr"><h1 class="h1">Mapa nabídek</h1><div class="box"><div class="big">Mapa přibude v další etapě</div><p class="muted">Nabídky obarvené podle skóre, vaše měření hluku a hluková mapa v noci. Zatím ji najdete v rozšíření v počítači (menu RealitAI → Mapa nabídek).</p></div></div>${nav('mapa')}`;
+  const p = mapPrefs();
+  return `<div class="mapw"><div id="map" aria-label="Mapa nabídek"></div>
+    <div class="mtop2"><label class="search">${I.search}<input type="search" data-a="mq" placeholder="Hledat nabídku…" aria-label="Hledat nabídku na mapě" enterkeyhint="search"></label>
+      <div class="chips mchips">${MAPLAY.map(([k, l]) => `<button class="chip${p[k] ? ' on' : ''}" data-lay="${k}" aria-pressed="${!!p[k]}">${l}</button>`).join('')}</div><div class="mnote" data-mnote hidden></div></div>
+    <div class="mcard" data-mcard hidden></div><div class="mmsg" data-mmsg hidden></div></div>`;
+}
+const scoreQ = it => it.ko ? 'q1' : it.skore == null ? 'q0' : it.skore >= 4 ? 'q5' : it.skore >= 3.5 ? 'q4' : it.skore >= 3 ? 'q3' : 'q2';
+async function wireMapa(root) {
+  let L;
+  try { L = await loadLeaflet(); } catch (_) { const m = root.querySelector('[data-mmsg]'); m.hidden = false; m.textContent = 'Mapa potřebuje připojení k internetu.'; return; }
+  const el = root.querySelector('#map');
+  if (!el || !el.isConnected) return;
+  const v = LS.get('mapView') || { c: [50.08, 14.44], z: 12 };
+  const map = L.map(el, { zoomControl: false, attributionControl: true }).setView(v.c, v.z);
+  M.map = map;
+  const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/';
+  L.tileLayer(ESRI + 'World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, maxNativeZoom: 16, attribution: 'Podklad © Esri, HERE, Garmin, © OpenStreetMap' }).addTo(map);
+  map.createPane('ovl').style.zIndex = 350; map.createPane('labels').style.zIndex = 380; map.getPane('labels').style.pointerEvents = 'none';
+  L.tileLayer(ESRI + 'World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, maxNativeZoom: 16, pane: 'labels' }).addTo(map);
+  const p = mapPrefs(), offL = L.layerGroup(), measL = L.layerGroup();
+  let q = '';
+  const items = () => idxItems().filter(it => it.lat && it.lon && (it.ulozeno !== false || it.vlastni));
+  const card = root.querySelector('[data-mcard]');
+  const showCard = async it => {
+    const n = (it.mereni || []).length;
+    card.innerHTML = `<div class="th" data-th="${it.id}"></div><a href="#/n/${it.id}"><b>${esc(placeOf(it) || titleOf(it))}</b><span>${esc(titleOf(it))} · ${kc(it.cena)}</span><small>${it.ko ? 'KO' : it.skore != null ? 'skóre ' + sc(it.skore) : 'bez analýzy'}${n ? ` · ${n} ${n === 1 ? 'měření' : 'měření'} hluku (${Math.round(Math.min(...it.mereni.map(m => m.db)))}–${Math.round(Math.max(...it.mereni.map(m => m.db)))} dB)` : ''}</small></a><a class="go" href="#/n/${it.id}" aria-label="Otevřít detail">›</a>`;
+    card.hidden = false; wireThumbs(card);
+  };
+  function draw() {
+    offL.clearLayers(); measL.clearLayers();
+    const w = norm(q).trim().split(/\s+/).filter(Boolean);
+    const list = items().filter(it => w.every(x => (it.q || '').includes(x) || norm(titleOf(it) + ' ' + placeOf(it)).includes(x)));
+    for (const it of list) {
+      const m = L.marker([it.lat, it.lon], { icon: L.divIcon({ className: '', html: `<span class="mk ${scoreQ(it)}">${it.ko ? 'KO' : it.skore != null ? sc(it.skore) : ''}</span>`, iconSize: [30, 30], iconAnchor: [15, 15] }), keyboard: false });
+      m.on('click', e => { L.DomEvent.stopPropagation(e); showCard(it); });
+      offL.addLayer(m);
+      for (const x of it.mereni || []) measL.addLayer(L.marker([x.lat, x.lon], { icon: L.divIcon({ className: '', html: `<span class="mdb" style="background:${dbCol(x.db)}">${Math.round(x.db)}</span>`, iconSize: [30, 20], iconAnchor: [15, 10] }), interactive: false }));
+    }
+    // vlastní měření, která rozšíření ještě nezpracovalo
+    for (const o of OB.sent.flatMap(x => x.ops).concat(OB.pending)) if (o.op === 'mereni.add' && o.item.lat) measL.addLayer(L.marker([o.item.lat, o.item.lon], { icon: L.divIcon({ className: '', html: `<span class="mdb" style="background:${dbCol(o.item.db)}">${Math.round(o.item.db)}</span>`, iconSize: [30, 20], iconAnchor: [15, 10] }), interactive: false }));
+    if (p.off) offL.addTo(map); else map.removeLayer(offL);
+    if (p.meas) measL.addTo(map); else map.removeLayer(measL);
+    return list;
+  }
+  // Prague noise map at night: one ArcGIS export image per view (tiles of this service are very slow)
+  let ovl = null, seqN = 0;
+  const note = root.querySelector('[data-mnote]');
+  function noise() {
+    note.hidden = !(p.noise && map.getZoom() < 15);
+    note.textContent = 'Hluková mapa se ukáže po přiblížení (jen území Prahy).';
+    if (!p.noise || map.getZoom() < 15) { if (ovl) { map.removeLayer(ovl); ovl = null; } return; }
+    const b = map.getBounds(), sz = map.getSize(), sw = L.CRS.EPSG3857.project(b.getSouthWest()), ne = L.CRS.EPSG3857.project(b.getNorthEast());
+    const url = `https://gs-pub.praha.eu/arcgis/rest/services/hm/hluk/MapServer/export?bbox=${sw.x},${sw.y},${ne.x},${ne.y}&bboxSR=3857&imageSR=3857&size=${sz.x},${sz.y}&format=png32&transparent=true&layers=show:7&f=image`;
+    const k = ++seqN, img = new Image();
+    img.onload = () => { if (k !== seqN || !p.noise) return; const n = L.imageOverlay(url, b, { opacity: 0.55, interactive: false, pane: 'ovl' }).addTo(map); if (ovl) map.removeLayer(ovl); ovl = n; };
+    img.src = url;
+  }
+  const list0 = draw();
+  // first view: offers around the median position (a few far-away offers would zoom out to the whole region)
+  if (!LS.get('mapView') && list0.length) {
+    const med = k => list0.map(it => it[k]).sort((a, b) => a - b)[list0.length >> 1], cLat = med('lat'), cLon = med('lon');
+    const near = list0.filter(it => distM(cLat, cLon, it.lat, it.lon) < 15000);
+    map.fitBounds(L.latLngBounds((near.length ? near : list0).map(it => [it.lat, it.lon])), { paddingTopLeft: [20, 150], paddingBottomRight: [20, 110] });
+  }
+  noise();
+  map.on('moveend', () => { LS.set('mapView', { c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom() }); noise(); });
+  map.on('click', () => { card.hidden = true; });
+  const zcls = () => el.classList.toggle('far', map.getZoom() < 13); // smaller dots when zoomed out
+  zcls(); map.on('zoomend', zcls);
+  root.querySelectorAll('[data-lay]').forEach(b => b.addEventListener('click', () => { const k = b.dataset.lay; p[k] = !p[k]; LS.set('mapLay', p); b.classList.toggle('on', p[k]); b.setAttribute('aria-pressed', p[k]); draw(); noise(); }));
+  const mq = root.querySelector('[data-a=mq]');
+  mq.addEventListener('input', () => { q = mq.value; draw(); });
+  mq.addEventListener('keydown', e => { if (e.key !== 'Enter') return; const l = draw(); if (l.length) { map.fitBounds(L.latLngBounds(l.map(it => [it.lat, it.lon])).pad(0.2), { maxZoom: 16 }); if (l.length === 1) showCard(l[0]); } mq.blur(); });
 }
 let installEvt = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
@@ -424,7 +521,7 @@ async function viewNastaveni() {
     <input class="field" data-a="client" value="${esc(clientId())}" placeholder="ID klienta Google" spellcheck="false" autocomplete="off">
     <p class="hint">Stejné ID jako v rozšíření (Nastavení → Telefon). Není to heslo – je veřejné.</p>
     <div style="margin-top:22px"><button class="btn danger" style="width:100%" data-a="wipe">Odpojit Google účet a smazat data z telefonu</button></div>
-    <p class="hint">Verze ${APP_V} · etapa 4 (měření hluku). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
+    <p class="hint">Verze ${APP_V}. Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
   </div>${nav('nastaveni')}`;
 }
 function viewIntro() {
@@ -715,7 +812,7 @@ async function viewVisit(id, tab) {
     bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
   } else {
     const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
-    body = `<div class="box"><h3>Naměřeno${L.hlukNoc ? ` <small>hluková mapa v noci ${L.hlukNoc} dB</small>` : ''}</h3>${m.length ? `<div class="items">${m.map(x => `<div class="it row"><span><b class="db" style="background:${dbCol(x.db)}">${esc(x.db)}</b>${esc(x.misto || 'místo neuvedeno')}<small class="muted"> · ${fmtT(x.t)}${x.t ? ` · ${isNightT(x.t) ? 'noc' : 'den'}` : ''}${x.acc ? ` · 📍 ±${Math.round(x.acc)} m` : ''}</small></span><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
+    body = `<div class="box"><h3>Naměřeno${L.hlukNoc ? ` <small>hluková mapa v noci ${L.hlukNoc} dB</small>` : ''}</h3>${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))}</span><div><b>${esc(x.misto || 'místo neuvedeno')}</b><small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></div><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
     bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
   return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><small>${visitWhen(d)}</small><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
@@ -877,7 +974,7 @@ async function openMeter() {
   raf = requestAnimationFrame(loop);
   $('[data-save]').addEventListener('click', async () => {
     const dur = Math.round(Math.min(15000, performance.now() - t0) / 1000);
-    const item = { db: Math.round(M.avg * 10) / 10, misto, t: new Date().toISOString(), zdroj: 'mikrofon', dur, korekce: micCal() };
+    const item = { db: Math.round(M.avg * 10) / 10, min: M.min != null ? Math.round(M.min) : null, max: M.max != null ? Math.round(M.max) : null, misto, t: new Date().toISOString(), zdroj: 'mikrofon', dur, korekce: micCal() };
     if (pos) Object.assign(item, pos);
     stop();
     await queueOp({ nid: id, op: 'mereni.add', item });
@@ -900,6 +997,7 @@ function route() {
 }
 async function render() {
   if (M.close) M.close(); // leaving the screen (back gesture) stops the microphone
+  if (M.map) { M.map.remove(); M.map = null; }
   if (S.notesFlush) { S.notesFlush(); S.notesFlush = null; } // save unsaved notes before the field disappears
   if (route().v === 'notes') { history.replaceState(null, '', `#/n/${route().id}?t=poznamky`); } // legacy link to the standalone editor
   const seq = ++renderSeq, r = route(), key = r.v + (r.id || '');
@@ -913,6 +1011,7 @@ async function render() {
   if (r.v === 'detail') wireDetail($app, r.id);
   if ((r.v === 'detail' || r.v === 'visit') && $app.querySelector('[data-ned]')) wireNotes($app, r.id);
   if (r.v === 'visit') wireVisit($app, r.id);
+  if (r.v === 'mapa') wireMapa($app);
   setNav(html.startsWith('<div class="intro">') ? null : r.v === 'list' ? '' : ['mapa', 'prohlidky', 'nastaveni'].includes(r.v) ? r.v : null);
   if (key !== curKey) { curKey = key; window.scrollTo(0, scrollPos.get(key) || 0); }
   stickTabs();
