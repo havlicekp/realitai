@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.0';
+const APP_V = '1.6.2';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -264,7 +264,7 @@ const FILTRY = [
 function card(it) {
   const p = planned(it), tags = [];
   if (it.ko) tags.push('<span class="tag bad">KO</span>');
-  else if (it.skore != null) tags.push(`<span class="tag ${scoreCls(it.skore)}">${it.rezim === 'screening' ? 'scr. ' : 'DD '}${sc(it.skore)}</span>`);
+  else if (it.skore != null) tags.push(`<span class="tag ${scoreCls(it.skore)}" title="${it.rezim === 'screening' ? 'Screening' : 'Plná analýza'}" aria-label="${it.rezim === 'screening' ? 'Screening' : 'Plná analýza'} ${sc(it.skore)}">${it.rezim === 'screening' ? '◐' : '●'} ${sc(it.skore)}</span>`); // same marks as the extension
   if (p) { const d = new Date(p.datum); tags.push(`<span class="tag date">${DNY[d.getDay()].toLowerCase()} ${d.getDate()}. ${d.getMonth() + 1}.</span>`); }
   if (it.zmenaCeny) tags.push(`<span class="tag ${it.zmenaCeny < 0 ? 'ok' : 'bad'}">${it.zmenaCeny < 0 ? '↓' : '↑'} ${Math.abs(it.zmenaCeny) >= 1e6 ? mil(Math.abs(it.zmenaCeny)) : Math.round(Math.abs(it.zmenaCeny) / 1000).toLocaleString('cs-CZ') + ' tis.'}</span>`);
   if (it.ulozeno === false) tags.push('<span class="tag">už neuloženo</span>');
@@ -807,7 +807,8 @@ async function viewVisit(id, tab) {
   } else if (tab === 'pozn') body = notesBox(d.poznamky, true);
   else if (tab === 'foto') {
     const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
-    body = ph.length ? `<div class="pgrid">${ph.map(p => `<button class="ph" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}">${p.popis ? `<span>${esc(p.popis)}</span>` : ''}</button>`).join('')}</div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
+    // same row format as noise: photo, part of the flat, time, small x to delete
+    body = ph.length ? `<div class="box"><h3>Fotky <small>${ph.length}</small></h3><div class="mlist">${ph.map(p => `<div class="mrow"><button class="phs" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}" aria-label="Upravit fotku"></button><button class="mtx" data-a="ph-open" data-fid="${p.fid}"><b class="${p.popis ? '' : 'ph0'}">${esc(p.popis || 'Kde? Klepněte a vyberte')}</b><small>${fmtT(p.at)}</small></button><button class="x" data-a="ph-del" data-fid="${p.fid}" aria-label="Smazat fotku">×</button></div>`).join('')}</div></div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
     body += `<p class="hint">Fotky se uloží do Příloh nabídky v počítači${fotoPolicy() === 'hned' ? '' : fotoPolicy() === 'wifi' ? ' a odešlou se přes Wi‑Fi' : ' po „Odeslat teď“ v Nastavení'}.</p>`;
     bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
   } else {
@@ -832,7 +833,13 @@ function wireVisit(root, id) {
     const n = document.querySelector('.qin'); if (n && !V.editing) n.focus();
   });
   const take = root.querySelector('[data-a=ph-take]');
-  if (take) take.addEventListener('change', async () => { for (const file of take.files) await addPhoto(id, file); render(); flushPhotos(); });
+  if (take) take.addEventListener('change', async () => {
+    let last = null;
+    for (const file of take.files) last = await addPhoto(id, file);
+    await render();
+    if (take.files.length === 1 && last) photoSheet(last); // ask where the photo was taken
+    flushPhotos();
+  });
   root.querySelectorAll('[data-ph]').forEach(async el => { const p = await DB.get('photos', el.dataset.ph); if (p) el.style.backgroundImage = `url("${URL.createObjectURL(new Blob([p.buf], { type: p.type }))}")`; });
 }
 Object.assign(ACTIONS, {
@@ -841,15 +848,25 @@ Object.assign(ACTIONS, {
   'q-edit': a => { V.editing = a.dataset.k; V.menu = null; render().then(() => { const n = document.querySelector('.qin'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); },
   'q-del': async a => { V.menu = null; await queueOp({ nid: route().id, op: 'overit.set', key: a.dataset.k, patch: { del: true } }); render(); },
   'foto-pol': a => { LS.set('fotoPol', a.dataset.k); render(); flushPhotos(); },
-  'ph-open': async a => {
-    const p = await DB.get('photos', a.dataset.fid); if (!p) return;
-    const url = URL.createObjectURL(new Blob([p.buf], { type: p.type }));
-    const el = sheet('Fotka', `<img class="phbig" src="${url}" alt=""><label class="lbl">Popis</label><div class="chips2" data-name="popis">${['koupelna', 'kuchyň', 'ložnice', 'okna', 'sklep', 'stoupačky', 'okolí'].map(m => `<button type="button" data-v="${m}">${m}</button>`).join('')}</div>
-      <input class="field" name="popis" value="${esc(p.popis || '')}" placeholder="např. vlhkost v rohu koupelny"><button type="button" class="btn danger" data-del>Smazat fotku</button>`,
-    async v => { const popis = v.popis.trim(); if (popis === (p.popis || '')) return; p.popis = popis; await DB.put('photos', p.fid, p); if (p.uploaded) await queueOp({ nid: p.nid, op: 'foto.set', fid: p.fid, popis }); }, 'Uložit');
-    el.querySelector('[data-del]').addEventListener('click', async () => { if (!confirm('Smazat fotku? Smaže se i z Příloh v počítači.')) return; await DB.del('photos', p.fid); if (p.uploaded) await queueOp({ nid: p.nid, op: 'foto.del', fid: p.fid }); el.remove(); countPhotos(); render(); });
+  'ph-open': a => photoSheet(a.dataset.fid),
+  'ph-del': async a => {
+    const p = await DB.get('photos', a.dataset.fid); if (!p || !confirm('Smazat fotku? Smaže se i z Příloh v počítači.')) return;
+    await DB.del('photos', p.fid); if (p.uploaded) await queueOp({ nid: p.nid, op: 'foto.del', fid: p.fid });
+    countPhotos(); render();
   }
 });
+// Photo: which part of the flat (chips or own text); opens right after taking a photo
+const CASTI = ['ložnice', 'pokoj', 'obývák', 'kuchyň', 'koupelna', 'WC', 'chodba', 'sklep', 'balkon', 'dům a okolí'];
+async function photoSheet(fid) {
+  const p = await DB.get('photos', fid); if (!p) return;
+  const url = URL.createObjectURL(new Blob([p.buf], { type: p.type }));
+  const el = sheet('Kde je fotka?', `<img class="phbig" src="${url}" alt=""><div class="chips2" data-name="popis">${CASTI.map(m => `<button type="button" data-v="${m}"${p.popis === m ? ' class="on"' : ''}>${m}</button>`).join('')}</div>
+    <input class="field" name="popis" value="${esc(p.popis || '')}" placeholder="nebo vlastní popis, např. vlhkost v rohu koupelny">`,
+  async v => { const popis = v.popis.trim(), cur = await DB.get('photos', fid); if (!cur || popis === (cur.popis || '')) return; // re-read: the upload may have finished meanwhile
+    cur.popis = popis; await DB.put('photos', fid, cur); if (cur.uploaded) await queueOp({ nid: cur.nid, op: 'foto.set', fid, popis }); }, 'Uložit');
+  // a chip is enough – save right away
+  el.querySelectorAll('.chips2 button').forEach(b => b.addEventListener('click', () => { if (b.classList.contains('on')) el.querySelector('form').requestSubmit(); }));
+}
 // Photo from the camera: shrink to 2000 px JPEG (white background), keep it on the phone and upload by the photo policy
 async function addPhoto(nid, file) {
   let blob = file;
@@ -862,6 +879,7 @@ async function addPhoto(nid, file) {
   const fid = newId(), at = new Date().toISOString(), dt = at.slice(0, 16).replace('T', ' ').replace(':', '');
   await DB.put('photos', fid, { fid, nid, at, popis: '', type: 'image/jpeg', buf: await blob.arrayBuffer(), uploaded: false, name: `prohlidka ${dt}.jpg` });
   await countPhotos();
+  return fid;
 }
 async function countPhotos() { S.photoWait = (await DB.all('photos')).filter(p => !p.uploaded).length; drawOutbox(); }
 const onWifi = () => { const c = navigator.connection; return !c || !c.type || c.type === 'wifi' || c.type === 'ethernet'; };
@@ -876,8 +894,9 @@ async function flushPhotos(manual) {
     for (const p of wait) {
       const file = `foto-${p.nid}-${p.fid}.jpg`;
       await apiUpload(file, new Blob([p.buf], { type: p.type }), p.type);
-      p.uploaded = true; await DB.put('photos', p.fid, p);
-      await queueOp({ nid: p.nid, op: 'foto.add', fid: p.fid, file, name: p.name, popis: p.popis, at: p.at });
+      const cur = (await DB.get('photos', p.fid)) || p; // the description may have changed during the upload
+      cur.uploaded = true; await DB.put('photos', p.fid, cur);
+      await queueOp({ nid: p.nid, op: 'foto.add', fid: p.fid, file, name: p.name, popis: cur.popis, at: p.at });
     }
   } catch (_) {} finally { S.photoUp = false; countPhotos(); }
 }

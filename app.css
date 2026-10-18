@@ -299,3 +299,6 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .mrow { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--soft); } .mrow:last-child { border-bottom: 0; }
 .mrow > div { flex: 1; min-width: 0; } .mrow b { display: block; font-size: 14px; } .mrow small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
 .mdb2 { flex: none; min-width: 50px; height: 34px; padding: 0 8px; border-radius: 10px; color: var(--ink); font-size: 15px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.phs { flex: none; width: 50px; height: 50px; border: 0; border-radius: 10px; background: #CFC6BB center/cover no-repeat; }
+.mtx { flex: 1; min-width: 0; border: 0; background: none; text-align: left; padding: 0; font: inherit; color: var(--ink); }
+.mtx b { display: block; font-size: 14px; } .mtx b.ph0 { color: var(--brand); } .mtx small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
