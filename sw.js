@@ -1,6 +1,6 @@
 // Offline: aplikace (soubory stránky a písmo) se ukládá do mezipaměti; bez signálu se načte z ní. Data nabídek jsou v IndexedDB,
 // požadavky na Google (přihlášení, Drive API) jdou vždy do sítě.
-const V = 'rai-1.0.1';
+const V = 'rai-1.0.2';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'md.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

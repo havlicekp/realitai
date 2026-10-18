@@ -3,7 +3,7 @@
 // a stahuje jen soubory, jejichž otisk (appProperties.h) se změnil. Přihlášení Google = implicitní tok s přesměrováním,
 // rozsah drive.appdata (aplikace nevidí nic jiného z Drive). Bez serveru.
 'use strict';
-const APP_V = '1.0.1';
+const APP_V = '1.0.2';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -23,7 +23,7 @@ const DB = (() => {
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   }));
   const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-  const tx = async (st, mode, fn) => { const d = await open(), t = d.transaction(st, mode), out = fn(t.objectStore(st)); await new Promise((res, rej) => { t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error); }); return out; };
+  const tx = async (st, mode, fn) => { const d = await open(), t = d.transaction(st, mode), out = fn(t.objectStore(st)); await new Promise((res, rej) => { t.oncomplete = res; t.onerror = t.onabort = () => rej(t.error || new Error('Zápis do úložiště telefonu se nepodařil')); }); return out; };
   return {
     get: async (st, k) => req((await open()).transaction(st).objectStore(st).get(k)),
     put: (st, k, v) => tx(st, 'readwrite', s => s.put(v, k)),
@@ -150,7 +150,9 @@ async function syncNow(manual) {
     await Promise.all([0, 1, 2, 3, 4, 5].map(async () => {
       for (let j; (j = jobs.shift());) {
         if (j.k === 'n') { await DB.put('docs', j.it.id, await api(`/drive/v3/files/${byName.get(`n-${j.it.id}.json`).id}?alt=media`)); hs[j.it.id] = j.it.h; }
-        else { await DB.put('thumbs', j.it.id, await api(`/drive/v3/files/${byName.get(`t-${j.it.id}.jpg`).id}?alt=media`, 'blob')); ts[j.it.id] = j.it.t; S.thumbs.delete(j.it.id); }
+        else { // náhled jako ArrayBuffer – Blob v IndexedDB WebKit (Safari) v některých režimech neuloží
+          const b = await api(`/drive/v3/files/${byName.get(`t-${j.it.id}.jpg`).id}?alt=media`, 'blob');
+          await DB.put('thumbs', j.it.id, { type: b.type || 'image/jpeg', buf: await b.arrayBuffer() }); ts[j.it.id] = j.it.t; S.thumbs.delete(j.it.id); }
         S.done++; S.last = Date.now();
         if (Date.now() - lastDraw > 400) { lastDraw = Date.now(); await DB.put('meta', 'hs', hs); await DB.put('meta', 'ts', ts); drawSync(); }
       }
@@ -167,7 +169,7 @@ async function syncNow(manual) {
   } catch (e) {
     if (S.ctl && S.ctl.signal.aborted) { S.restart = true; return; } // přerušeno po návratu z pozadí – navázat
     if (e instanceof NeedLogin) { S.needLogin = true; if (manual && clientId()) { sessionStorage.setItem('rai-return', location.hash || '#/'); login(); return; } }
-    else S.error = navigator.onLine ? e.message : 'offline';
+    else S.error = navigator.onLine ? (e && e.message) || String(e) : 'offline';
   } finally {
     S.running = false; S.ctl = null;
     if (S.wake) { S.wake.release().catch(() => {}); S.wake = null; }
@@ -195,7 +197,7 @@ function drawSync() { const p = document.querySelector('[data-pill]'); if (p) p.
 // ---------- náhledy ----------
 async function thumbUrl(id) {
   if (S.thumbs.has(id)) return S.thumbs.get(id);
-  const b = await DB.get('thumbs', id), u = b ? URL.createObjectURL(b) : '';
+  const b = await DB.get('thumbs', id), u = !b ? '' : URL.createObjectURL(b instanceof Blob ? b : new Blob([b.buf], { type: b.type }));
   S.thumbs.set(id, u);
   return u;
 }
@@ -206,8 +208,18 @@ function wireThumbs(root) { root.querySelectorAll('[data-th]').forEach(el => thu
 // ---------- obrazovky ----------
 const ui = Object.assign({ filtr: 'ulozene', q: '', shown: 40 }, LS.get('ui') || {}, { shown: 40 });
 const saveUi = () => LS.set('ui', { filtr: ui.filtr });
-const nav = cur => `<nav class="nav" aria-label="Hlavní navigace">${[['', 'Nabídky'], ['mapa', 'Mapa'], ['prohlidky', 'Prohlídky'], ['nastaveni', 'Nastavení']].map(([k, l]) =>
-  `<a href="#/${k}" class="${cur === k ? 'on' : ''}"${cur === k ? ' aria-current="page"' : ''}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${cur === k ? 2.2 : 2}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I.nav[k]}</svg>${l}</a>`).join('')}</nav>`;
+// Hlavní navigace: jeden prvek mimo #app, při přechodu mezi obrazovkami se jen ukáže / skryje a přepne aktivní položka
+// (Safari na iPhonu po přestavění stránky nově vložené plovoucí menu občas nevykreslil)
+const $nav = document.createElement('nav');
+$nav.className = 'nav'; $nav.setAttribute('aria-label', 'Hlavní navigace'); $nav.hidden = true;
+$nav.innerHTML = [['', 'Nabídky'], ['mapa', 'Mapa'], ['prohlidky', 'Prohlídky'], ['nastaveni', 'Nastavení']].map(([k, l]) =>
+  `<a href="#/${k}" data-nav="${k}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I.nav[k]}</svg>${l}</a>`).join('');
+document.body.appendChild($nav);
+function setNav(cur) {
+  $nav.hidden = cur == null;
+  $nav.querySelectorAll('a').forEach(a => { const on = a.dataset.nav === cur; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+}
+const nav = () => '';
 const planned = it => (it.prohlidky || []).filter(p => p.datum && p.datum >= today()).sort((a, b) => a.datum.localeCompare(b.datum))[0] || null;
 const FILTRY = [
   ['prohlidka', 'Na prohlídku', it => !!planned(it) || it.stav === 'prohlidka'],
@@ -411,17 +423,18 @@ async function render() {
     : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id)
     : r.v === 'prohlidky' ? viewProhlidky() : r.v === 'mapa' ? viewMapa() : r.v === 'nastaveni' ? await viewNastaveni() : viewList();
   if (seq !== renderSeq) return;
-  if (key !== curKey) { scrollPos.set(curKey, window.scrollY); }
   $app.innerHTML = html;
   wireThumbs($app);
   if (r.v === 'list' && $app.querySelector('[data-a=q]')) wireList($app);
   if (r.v === 'detail') wireDetail($app, r.id);
-  if (key !== curKey) { window.scrollTo(0, scrollPos.get(key) || 0); curKey = key; }
+  setNav(html.startsWith('<div class="intro">') ? null : r.v === 'list' ? '' : ['mapa', 'prohlidky', 'nastaveni'].includes(r.v) ? r.v : null);
+  if (key !== curKey) { curKey = key; window.scrollTo(0, scrollPos.get(key) || 0); }
   stickTabs();
 }
 // lepkavé záložky detailu: pod stavovým řádkem iPhonu
 function stickTabs() { const t = document.querySelector('.tabs'); if (t) t.classList.toggle('stuck', t.getBoundingClientRect().top <= 1); }
-addEventListener('scroll', stickTabs, { passive: true });
+addEventListener('scroll', () => { stickTabs(); if (curKey) scrollPos.set(curKey, window.scrollY); }, { passive: true });
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; // pozici seznamu po návratu obnovuje aplikace
 addEventListener('hashchange', render);
 addEventListener('online', () => { if (S.error === 'offline') S.error = null; syncNow(); });
 addEventListener('offline', () => { S.error = 'offline'; drawSync(); });
