@@ -1,7 +1,7 @@
 {
   "name": "RealitAI",
   "short_name": "RealitAI",
-  "description": "Archiv nabídek, analýzy a prohlídky z rozšíření RealitAI – jen pro vás.",
+  "description": "Saved offers, analyses and viewings from the RealitAI extension – private to you.",
   "lang": "cs",
   "start_url": "./#/",
   "scope": "./",

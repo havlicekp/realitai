@@ -1,20 +1,20 @@
-// RealitAI v telefonu – etapa 1: čtení archivu z Google Drive (skrytá složka aplikace) a provoz offline.
-// Data posílá rozšíření RealitAI (Nastavení → Telefon): index.json, n-ID.json, t-ID.jpg. Telefon je uloží do IndexedDB
-// a stahuje jen soubory, jejichž otisk (appProperties.h) se změnil. Přihlášení Google = implicitní tok s přesměrováním,
-// rozsah drive.appdata (aplikace nevidí nic jiného z Drive). Bez serveru.
+// RealitAI mobile companion: reads the archive from Google Drive (hidden app data folder), works offline and sends
+// edits back. The RealitAI browser extension uploads index.json, n-ID.json and t-ID.jpg; the phone stores them in
+// IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
+// redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.1.0';
+const APP_V = '1.2.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
-// ---------- úložiště ----------
+// ---------- storage ----------
 const LS = {
   get(k) { try { return JSON.parse(localStorage.getItem('rai-' + k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem('rai-' + k, JSON.stringify(v)); } catch (_) {} },
   del(k) { try { localStorage.removeItem('rai-' + k); } catch (_) {} }
 };
 const clientId = () => LS.get('clientId') || (window.RAI_CONFIG || {}).clientId || '';
-const apiBase = () => LS.get('base') || 'https://www.googleapis.com'; // jiná adresa jen pro testy
+const apiBase = () => LS.get('base') || 'https://www.googleapis.com'; // different address only for tests
 const DB = (() => {
   let opening;
   const open = () => opening || (opening = new Promise((res, rej) => {
@@ -33,7 +33,7 @@ const DB = (() => {
   };
 })();
 
-// ---------- formátování ----------
+// ---------- formatting ----------
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kc = v => v ? Math.round(v).toLocaleString('cs-CZ') + ' Kč' : 'cena neuvedena';
 const mil = v => (v / 1e6).toLocaleString('cs-CZ', { maximumFractionDigits: 1 }) + ' mil.';
@@ -64,7 +64,7 @@ const I = {
   }
 };
 
-// ---------- přihlášení Google ----------
+// ---------- Google sign-in ----------
 const token = () => { const t = LS.get('token'); return t && t.exp > Date.now() + 60e3 ? t.t : null; };
 function login(prompt) {
   const st = Math.random().toString(36).slice(2);
@@ -73,7 +73,7 @@ function login(prompt) {
   u.search = new URLSearchParams(Object.assign({ client_id: clientId(), response_type: 'token', redirect_uri: location.origin + location.pathname, scope: SCOPE, include_granted_scopes: 'true', state: st }, prompt ? { prompt } : {}));
   location.assign(u.href);
 }
-// Návrat z přihlášení: #access_token=…&expires_in=…&state=… (nebo #error=… při tichém obnovení)
+// Return from sign-in: #access_token=…&expires_in=…&state=… (or #error=… after a silent renewal)
 function takeToken() {
   const h = location.hash.slice(1);
   if (!/(^|&)(access_token|error)=/.test(h)) return;
@@ -91,7 +91,7 @@ class NeedLogin extends Error {}
 async function api(path, as) {
   const t = token();
   if (!t) throw new NeedLogin('Přihlášení vypršelo');
-  // každý požadavek: limit 30 s a zrušení celé synchronizace (po návratu z pozadí iOS „zamrzlé“ požadavky neskončí samy)
+  // every request: 30 s limit plus cancellation of the whole sync (after iOS resumes the app, stalled requests never finish)
   const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), 30000), stop = () => ctl.abort();
   if (S.ctl) S.ctl.signal.addEventListener('abort', stop);
   let r;
@@ -123,14 +123,14 @@ async function syncNow(manual) {
   if (S.running) return;
   if (!navigator.onLine) { S.error = 'offline'; render(); return; }
   if (!token()) {
-    // tiché obnovení přihlášení (jednou za spuštění), jinak tlačítko Přihlásit
+    // silent sign-in renewal (once per launch), otherwise show the sign-in button
     if (LS.get('connected') && clientId() && !sessionStorage.getItem('rai-silent')) { sessionStorage.setItem('rai-silent', '1'); sessionStorage.setItem('rai-return', location.hash || '#/'); login('none'); return; }
     S.needLogin = true; render(); return;
   }
   S.running = true; S.error = null; S.needLogin = false; S.done = 0; S.total = 0; S.last = Date.now(); S.ctl = new AbortController(); render();
   await flush();
-  // obrazovka se během stahování nezamkne (iOS 16.4+, Android); při přepnutí do jiné aplikace iOS stránku uspí –
-  // stažené se průběžně ukládá a další synchronizace naváže
+  // keep the screen awake while downloading (iOS 16.4+, Android); iOS suspends the page in the background –
+  // downloads are saved as they arrive and the next sync resumes
   try { S.wake = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (_) { S.wake = null; }
   try {
     const files = await listFiles(), byName = new Map(files.map(f => [f.name, f]));
@@ -138,7 +138,7 @@ async function syncNow(manual) {
     if (!fi) { S.error = 'empty'; return; }
     const meta = (await DB.get('meta', 'index')) || {}, ih = (fi.appProperties || {}).h;
     const idx = meta.h === ih && meta.items ? meta : await api(`/drive/v3/files/${fi.id}?alt=media`);
-    // seznam uložit hned – i když se stahování detailů přeruší, nabídky jsou vidět (detail ukáže „ještě se stahuje“)
+    // store the list right away – offers are visible even if the detail download is interrupted
     if (meta.h !== ih) { await DB.put('meta', 'index', { h: ih, at: idx.at, items: idx.items, syncedAt: meta.syncedAt || null }); S.index = idx.items; S.serverAt = idx.at; }
     const hs = (await DB.get('meta', 'hs')) || {}, ts = (await DB.get('meta', 'ts')) || {};
     const jobs = [];
@@ -151,14 +151,14 @@ async function syncNow(manual) {
     await Promise.all([0, 1, 2, 3, 4, 5].map(async () => {
       for (let j; (j = jobs.shift());) {
         if (j.k === 'n') { await DB.put('docs', j.it.id, await api(`/drive/v3/files/${byName.get(`n-${j.it.id}.json`).id}?alt=media`)); hs[j.it.id] = j.it.h; }
-        else { // náhled jako ArrayBuffer – Blob v IndexedDB WebKit (Safari) v některých režimech neuloží
+        else { // thumbnail as ArrayBuffer – WebKit (Safari) cannot store Blobs in IndexedDB in some modes
           const b = await api(`/drive/v3/files/${byName.get(`t-${j.it.id}.jpg`).id}?alt=media`, 'blob');
           await DB.put('thumbs', j.it.id, { type: b.type || 'image/jpeg', buf: await b.arrayBuffer() }); ts[j.it.id] = j.it.t; S.thumbs.delete(j.it.id); }
         S.done++; S.last = Date.now();
         if (Date.now() - lastDraw > 400) { lastDraw = Date.now(); await DB.put('meta', 'hs', hs); await DB.put('meta', 'ts', ts); drawSync(); }
       }
     }));
-    // nabídky, které z archivu zmizely
+    // offers removed from the archive
     const live = new Set(idx.items.map(x => x.id));
     for (const k of await DB.keys('docs')) if (!live.has(k)) { await DB.del('docs', k); delete hs[k]; }
     for (const k of await DB.keys('thumbs')) if (!live.has(k)) { await DB.del('thumbs', k); delete ts[k]; }
@@ -166,11 +166,11 @@ async function syncNow(manual) {
     S.at = Date.now();
     await DB.put('meta', 'index', { h: ih, at: idx.at, items: idx.items, syncedAt: S.at });
     S.index = idx.items; S.serverAt = idx.at;
-    // změny z telefonu, které rozšíření už zpracovalo, přestat překrývat
+    // stop overlaying phone edits that the extension has already applied
     if (idx.applied && OB.sent.length) { const ap = new Set(idx.applied); OB.sent = OB.sent.filter(x => !ap.has(x.file)); await saveOutbox(); }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   } catch (e) {
-    if (S.ctl && S.ctl.signal.aborted) { S.restart = true; return; } // přerušeno po návratu z pozadí – navázat
+    if (S.ctl && S.ctl.signal.aborted) { S.restart = true; return; } // interrupted after returning from background – resume
     if (e instanceof NeedLogin) { S.needLogin = true; if (manual && clientId()) { sessionStorage.setItem('rai-return', location.hash || '#/'); login(); return; } }
     else S.error = navigator.onLine ? (e && e.message) || String(e) : 'offline';
   } finally {
@@ -180,13 +180,13 @@ async function syncNow(manual) {
     if (S.restart) { S.restart = false; setTimeout(() => syncNow(), 300); }
   }
 }
-// Po synchronizaci: když uživatel právě píše do hledání, překreslit jen seznam (nezavírat klávesnici)
+// After sync: while the user types in search, redraw only the list (keep the keyboard open)
 function refresh() {
   const lbEl = document.querySelector('[data-lb]');
   if (lbEl && document.activeElement && document.activeElement.dataset.a === 'q') { lbEl.innerHTML = listBody(); wireThumbs(lbEl); drawSync(); return; }
   render();
 }
-// Stav synchronizace v hlavičce (překreslí jen pilulku, ne celý seznam)
+// Sync status pill in the header (redraws only the pill, not the whole list)
 function syncPill() {
   if (S.running) return `<span class="pill run"><span>${S.at ? 'Synchronizuji' : 'Stahuji'}${S.total ? ` ${S.done} z ${S.total}` : '…'}</span></span>`;
   if (S.needLogin) return `<span class="pill err"><span>Přihlášení vypršelo</span></span>`;
@@ -195,9 +195,33 @@ function syncPill() {
   if (S.error) return `<span class="pill err"><span>Chyba synchronizace</span></span>`;
   return S.at ? `<span class="pill">${I.ok}<span>Synchronizováno ${ago(S.at)}</span></span>` : '';
 }
-function drawSync() { const p = document.querySelector('[data-pill]'); if (p) p.innerHTML = syncPill(); const b = document.querySelector('[data-a=sync]'); if (b) b.classList.toggle('spin', S.running); }
+function drawSync() { const p = document.querySelector('[data-pill]'); if (p) p.innerHTML = syncPill(); if (!S.running) ptrHide(); }
+// Synchronizace tažením dolů (pull to refresh) na seznamu nabídek a prohlídek: ukazatel sjede shora, po puštění za hranicí
+// se spustí synchronizace a ukazatel se točí, dokud neskončí
+const $ptr = document.createElement('div');
+$ptr.className = 'ptr'; $ptr.setAttribute('aria-hidden', 'true'); $ptr.innerHTML = I.sync;
+document.body.appendChild($ptr);
+const PTR_MAX = 90, PTR_GO = 64;
+let ptrY0 = null, ptrD = 0;
+const ptrOn = () => ['list', 'prohlidky'].includes(route().v) && LS.get('connected') && !document.querySelector('.shbg');
+function ptrHide() { $ptr.classList.remove('spin', 'ready', 'drag'); $ptr.style.transform = ''; $ptr.style.opacity = ''; }
+addEventListener('touchstart', e => { ptrY0 = ptrOn() && window.scrollY <= 0 && !S.running && e.touches.length === 1 ? e.touches[0].clientY : null; ptrD = 0; }, { passive: true });
+addEventListener('touchmove', e => {
+  if (ptrY0 == null) return;
+  const dy = e.touches[0].clientY - ptrY0;
+  if (dy <= 0 || window.scrollY > 0) { ptrD = 0; ptrHide(); return; }
+  ptrD = Math.min(PTR_MAX, dy * 0.5);
+  $ptr.classList.add('drag'); $ptr.classList.toggle('ready', ptrD >= PTR_GO);
+  $ptr.style.transform = `translateY(${ptrD}px) rotate(${ptrD * 4}deg)`; $ptr.style.opacity = Math.min(1, ptrD / PTR_GO);
+}, { passive: true });
+addEventListener('touchend', () => {
+  if (ptrY0 == null) return;
+  ptrY0 = null; $ptr.classList.remove('drag');
+  if (ptrD >= PTR_GO) { $ptr.classList.add('spin'); $ptr.style.transform = `translateY(${PTR_GO}px)`; $ptr.style.opacity = 1; syncNow(true).finally(() => setTimeout(ptrHide, 300)); }
+  else ptrHide();
+});
 
-// ---------- náhledy ----------
+// ---------- thumbnails ----------
 async function thumbUrl(id) {
   if (S.thumbs.has(id)) return S.thumbs.get(id);
   const b = await DB.get('thumbs', id), u = !b ? '' : URL.createObjectURL(b instanceof Blob ? b : new Blob([b.buf], { type: b.type }));
@@ -211,8 +235,8 @@ function wireThumbs(root) { root.querySelectorAll('[data-th]').forEach(el => thu
 // ---------- obrazovky ----------
 const ui = Object.assign({ filtr: 'ulozene', q: '', shown: 40 }, LS.get('ui') || {}, { shown: 40 });
 const saveUi = () => LS.set('ui', { filtr: ui.filtr });
-// Hlavní navigace: jeden prvek mimo #app, při přechodu mezi obrazovkami se jen ukáže / skryje a přepne aktivní položka
-// (Safari na iPhonu po přestavění stránky nově vložené plovoucí menu občas nevykreslil)
+// Main navigation: a single element outside #app, only shown/hidden and re-highlighted between screens
+// (iPhone Safari sometimes failed to paint a freshly inserted floating bar after a re-render)
 const $nav = document.createElement('nav');
 $nav.className = 'nav'; $nav.setAttribute('aria-label', 'Hlavní navigace'); $nav.hidden = true;
 $nav.innerHTML = [['', 'Nabídky'], ['mapa', 'Mapa'], ['prohlidky', 'Prohlídky'], ['nastaveni', 'Nastavení']].map(([k, l]) =>
@@ -223,7 +247,7 @@ function setNav(cur) {
   $nav.querySelectorAll('a').forEach(a => { const on = a.dataset.nav === cur; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
 }
 const nav = () => '';
-const upcoming = p => p.datum && (p.datum > today() || (p.datum === today() && !p.dojem)); // dnešní s dojmem už proběhla
+const upcoming = p => p.datum && (p.datum > today() || (p.datum === today() && !p.dojem)); // today's visit with a rating has already happened
 const planned = it => (it.prohlidky || []).filter(upcoming).sort((a, b) => a.datum.localeCompare(b.datum))[0] || null;
 const FILTRY = [
   ['prohlidka', 'Na prohlídku', it => !!planned(it) || it.stav === 'prohlidka'],
@@ -261,10 +285,10 @@ function viewList() {
   const items = idxItems(), f = FILTRY.find(x => x[0] === ui.filtr) || FILTRY[1];
   const banner = S.needLogin ? `<div class="banner"><span>Přihlášení ke Google vypršelo – data jsou z ${S.at ? ago(S.at) : 'minula'}.</span><button class="sm" data-a="login">Přihlásit</button></div>`
     : S.error && S.error !== 'offline' && S.error !== 'empty' ? `<div class="banner"><span>${esc(S.error)}</span><button class="sm" data-a="sync-retry">Zkusit znovu</button></div>`
+    : S.error === 'offline' ? `<div class="banner off"><span>Offline${S.at ? ' · data ' + ago(S.at) : ''}</span></div>`
     : S.running && !S.at ? `<div class="banner"><span>První stažení trvá asi minutu – nechte aplikaci otevřenou. Když ji zavřete, příště naváže tam, kde skončila.</span></div>`
     : S.error === 'empty' && !items.length ? `<div class="banner"><span>V Google Drive zatím nejsou data. V rozšíření RealitAI otevřete Nastavení → Telefon a klikněte na „Připojit Google Drive“.</span></div>` : '';
   return `<div class="scr">
-    <div class="top"><div data-pill>${syncPill()}</div><button class="ibtn${S.running ? ' spin' : ''}" data-a="sync" aria-label="Synchronizovat teď">${I.sync}</button></div>
     ${banner}
     <h1 class="h1">Nabídky</h1>
     <label class="search">${I.search}<input type="search" data-a="q" value="${esc(ui.q)}" placeholder="Hledat ulici, čtvrť, poznámku…" aria-label="Hledat v nabídkách" enterkeyhint="search"></label>
@@ -274,15 +298,15 @@ function viewList() {
 }
 function wireList(root) {
   const inp = root.querySelector('[data-a=q]');
-  // při psaní překreslit jen seznam (klávesnice v telefonu zůstane otevřená)
+  // while typing redraw only the list (the phone keyboard stays open)
   const lb = () => { const el = root.querySelector('[data-lb]'); el.innerHTML = listBody(); wireThumbs(el); };
   inp.addEventListener('input', () => { ui.q = inp.value; ui.shown = 40; lb(); });
   root.querySelectorAll('[data-f]').forEach(b => b.addEventListener('click', () => { ui.filtr = b.dataset.f; ui.shown = 40; saveUi(); root.querySelectorAll('[data-f]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-selected', x === b); }); lb(); }));
   root.addEventListener('click', e => { if (e.target.closest('[data-a=more]')) { ui.shown += 60; lb(); } });
 }
 
-// detail nabídky
-const TABS = [['prehled', 'Přehled'], ['analyza', 'Analýza'], ['poznamky', 'Poznámky'], ['postup', 'Můj postup']];
+// offer detail
+const TABS = [['prehled', 'Přehled'], ['analyza', 'Analýza'], ['poznamky', 'Poznámky']];
 const param = (d, re) => { const p = (d.parametry || []).find(([k]) => re.test(k)); return p ? p[1] : null; };
 function bars(idx) {
   return `<div class="bars">${idx.map(x => `<div class="bar"><span>${esc(x.nazev.replace(/ \(.*\)$/, ''))}</span><i><b class="${qCls(x.v)}" style="width:${Math.max(2, x.v)}%"></b></i><b>${x.v}</b></div>`).join('')}</div>`;
@@ -316,10 +340,10 @@ function tabAnalyza(d) {
   if (an.md) out.push(`<a class="rowlink" href="#/n/${d.id}/report">Celý report analýzy ›</a>`);
   return out.join('');
 }
-// Poznámky z editoru rozšíření: jen povolené značky, odkazy http(s)/mailto
+// Notes from the extension editor: allowed tags only, http(s)/mailto links
 function safeHtml(html) {
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html'), OK = /^(B|STRONG|I|EM|U|S|STRIKE|H3|H4|UL|OL|LI|P|BR|DIV|A|BLOCKQUOTE|SPAN)$/;
-  // povolené atributy: odkaz (http, https, mailto), značka obrázku z rozšíření (data-nimg, data-w – obrázek je jen v počítači)
+  // allowed attributes: link (http, https, mailto), image placeholder from the extension (data-nimg, data-w – the image stays on the computer)
   const keep = (c, a) => (c.tagName === 'A' && a.name === 'href' && /^(https?:|mailto:)/i.test(a.value)) || (c.tagName === 'SPAN' && (a.name === 'data-nimg' && /^\d+:n\d+$/.test(a.value) || a.name === 'data-w' && /^\d+$/.test(a.value)));
   const walk = n => { for (const c of [...n.childNodes]) { if (c.nodeType === 1) { if (!OK.test(c.tagName)) { c.replaceWith(...c.childNodes); continue; } for (const a of [...c.attributes]) if (!keep(c, a)) c.removeAttribute(a.name); if (c.tagName === 'A') { c.target = '_blank'; c.rel = 'noopener'; } walk(c); } else if (c.nodeType !== 3) c.remove(); } };
   walk(doc.body.firstChild);
@@ -328,29 +352,11 @@ function safeHtml(html) {
 const fmtT = t => t ? new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 function tabPoznamky(d) {
   const out = [], P = d.poznamky;
-  out.push(`<div class="box"><h3>Poznámky <small>${P && P.at ? fmtT(P.at) : ''}${P && P.local ? ' · ⇡ čeká na odeslání' : ''}</small></h3>${P ? `<div class="notes">${P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')}</div>` : '<p class="muted">Zatím bez poznámek.</p>'}
-    <a class="rowlink in" href="#/n/${d.id}/poznamky">${P ? 'Upravit poznámky' : '+ Napsat poznámku'}</a></div>`);
-  out.push(`<div class="box"><h3>Měření hluku <button class="sm" data-a="meas-add">+ Přidat</button></h3>${(d.mereni || []).length ? `<div class="items">${d.mereni.slice().sort((a, b) => String(b.t).localeCompare(String(a.t))).map(m => `<div class="it row"><span><b class="db" style="background:${dbCol(m.db)}">${esc(m.db)}</b>${esc(m.misto || 'místo neuvedeno')}${m.t ? ` · ${fmtT(m.t)}` : ''}${m.local ? ' <span class="loc">⇡</span>' : ''}</span><button class="x" data-a="meas-del" data-t="${esc(m.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Hodnotu z měřicí aplikace zapíšete tlačítkem Přidat. Měření mikrofonem telefonu přibude v další etapě.</p>'}</div>`);
+  // notes are edited in place (toolbar above, automatic lists and links as in the extension)
+  out.push(`<div class="box nbox"><h3>Poznámky</h3>
+    <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<i></i>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}"${t[3] ? ` style="${t[3]}"` : ''}>${t[1]}</button>`).join('')}</div>
+    <div class="ned notes" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky" data-ph="Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`);
   if ((d.prilohy || []).length) out.push(`<div class="box"><h3>Přílohy</h3><div class="items">${d.prilohy.map(a => `<div class="it"><b>·</b><span>${esc(a.name)} <span class="muted">${a.size ? Math.round(a.size / 1024).toLocaleString('cs-CZ') + ' kB' : ''}</span></span></div>`).join('')}</div><p class="muted">Soubory příloh jsou zatím jen v rozšíření v počítači.</p></div>`);
-  return out.join('');
-}
-function tabPostup(d) {
-  const p = d.postup || {}, an = d.analyza, st = [];
-  const step = (ok, now, title, sub, extra, del) => st.push({ ok, now, title, sub, extra, del });
-  if (d.fav && d.fav.od) step(true, false, d.vlastni ? 'Přidáno do archivu' : 'Uloženo z inzerátu', dat(d.fav.od));
-  if (an) step(true, false, 'Analýza hotová', an.ko.length ? 'KO' : `Skóre ${sc(an.skore)}${an.verdikt ? ' · ' + an.verdikt.slice(0, 60) : ''}`);
-  for (const x of (p.prohlidky || []).slice().sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || ''))))) {
-    const fut = upcoming(x);
-    step(!fut, fut, fut ? 'Prohlídka naplánována' : 'Prohlídka', [dat(x.datum) + (x.cas ? ' v ' + x.cas : ''), x.dojem ? `dojem ${x.dojem}/5` : ''].filter(Boolean).join(' · '), x.pozn, { k: 'prohlidka', m: { id: x.id, datum: x.datum, pozn: x.pozn || '' }, local: x.local });
-  }
-  for (const x of p.jednani || []) step(true, false, 'Jednání o ceně', [dat(x.datum), x.nabidka ? 'nabídka ' + kc(x.nabidka) : '', x.proti ? 'protinabídka ' + kc(x.proti) : ''].filter(Boolean).join(' · '), x.vysledek, { k: 'jednani', m: { id: x.id, datum: x.datum, pozn: x.pozn || '', nabidka: x.nabidka || null }, local: x.local });
-  if (p.konecna && p.konecna.cena) step(true, false, 'Konečná cena', [kc(p.konecna.cena), dat(p.konecna.datum), p.konecna.zdroj].filter(Boolean).join(' · '));
-  const out = [`<div class="box"><h3>Stav${p.stavAt ? ` <small>změněno ${dat(p.stavAt)}</small>` : ''}</h3>
-    <select class="field" data-a="stav">${[['', '– bez stavu –'], ...Object.entries(STAVY)].map(([v, l]) => `<option value="${v}"${(p.stav || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
-    <input class="field" style="margin-top:8px" data-a="duvod" value="${esc(p.duvod || '')}" placeholder="důvod / poznámka (např. proč odmítnuto)"></div>`];
-  if (st.length) out.push(`<div class="box tl">${st.map((s, i) => `<div class="st"><div><span class="dot${s.ok ? ' ok' : s.now ? ' now' : ''}">${s.ok ? I.ok : ''}</span>${i < st.length - 1 ? `<span class="ln${s.ok ? ' ok' : ''}"></span>` : ''}</div><div class="tx"><b>${esc(s.title)}${s.del && s.del.local ? ' <span class="loc">⇡</span>' : ''}</b><div>${esc(s.sub || '')}</div>${s.extra ? `<div>${esc(s.extra)}</div>` : ''}</div>${s.del ? `<button class="x" data-a="pst-del" data-k="${s.del.k}" data-m="${esc(JSON.stringify(s.del.m))}" aria-label="Smazat">×</button>` : ''}</div>`).join('')}</div>`);
-  out.push(`<div class="btns"><button class="sm" data-a="pr-add">+ Prohlídka</button><button class="sm" data-a="jd-add">+ Jednání o ceně</button><button class="sm" data-a="kc-set">Konečná cena</button></div>`);
-  if ((d.zmeny || []).length) out.push(`<details class="box"><summary>Změny inzerátu</summary><div class="items">${d.zmeny.slice().reverse().map(c => `<div class="it"><b>·</b><span>${dat(c.t)} ${esc(c.co)}: <span class="muted">${esc(c.old || '–')}</span> → ${esc(c.new || '–')}</span></div>`).join('')}</div></details>`);
   return out.join('');
 }
 async function viewDetail(id, tab) {
@@ -359,7 +365,7 @@ async function viewDetail(id, tab) {
   tab = TABS.some(t => t[0] === tab) ? tab : 'prehled';
   const an = d.analyza, ko = an && an.ko.length > 0, v = an && an.skore;
   const ring = an ? `<div class="ring" style="background:conic-gradient(${scoreCol(v, ko)} 0 ${ko ? 100 : (v || 0) / 5 * 100}%, #E4DED7 0 100%)" aria-label="${ko ? 'KO' : 'Skóre ' + sc(v) + ' z 5'}"><div><b>${ko ? 'KO' : sc(v)}</b><span>${ko ? '' : 'z 5'}</span></div></div>` : '';
-  const body = { prehled: tabPrehled, analyza: tabAnalyza, poznamky: tabPoznamky, postup: tabPostup }[tab](d, it);
+  const body = { prehled: tabPrehled, analyza: tabAnalyza, poznamky: tabPoznamky }[tab](d, it);
   return `<div class="dt"><div class="hero" data-th="${id}"><button class="back" data-a="back" aria-label="Zpět na nabídky">${I.back}</button>${d.url ? `<a class="all" href="${esc(d.url)}" target="_blank" rel="noopener">Všechny fotky ${I.ext}</a>` : ''}</div>
     <div class="sheet"><div class="head"><div style="min-width:0"><h1>${esc(titleOf(d))}</h1><div class="u">${esc(placeOf(d.lokalita) || d.nazev)}</div><div class="p">${kc(d.cena)}</div></div>${ring}</div>
       <div class="tabs" role="tablist" aria-label="Části detailu">${TABS.map(([k, l]) => `<button role="tab" data-tab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
@@ -367,8 +373,6 @@ async function viewDetail(id, tab) {
     ${d.url ? `<div class="bottom"><a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">${d.vlastni ? 'Stránka nabídky' : 'Inzerát na Sreality'} ${I.ext}</a></div>` : ''}</div>`;
 }
 function wireDetail(root, id) {
-  const st = root.querySelector('[data-a=stav]'), du = root.querySelector('[data-a=duvod]');
-  if (st) { const save = () => queueOp({ nid: id, op: 'postup.stav', stav: st.value, duvod: du.value.trim() }).then(() => render()); st.addEventListener('change', save); du.addEventListener('change', save); }
   root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { history.replaceState(null, '', `#/n/${id}?t=${b.dataset.tab}`); const tabs = root.querySelector('.tabs'), y = window.scrollY, top = tabs.getBoundingClientRect().top + y; render().then(() => window.scrollTo(0, Math.min(y, top))); }));
 }
 async function viewReport(id) {
@@ -381,8 +385,8 @@ function viewProhlidky() {
   for (const it of idxItems()) for (const p of it.prohlidky || []) if (p.datum) all.push({ it, p });
   const fut = all.filter(x => upcoming(x.p)).sort((a, b) => a.p.datum.localeCompare(b.p.datum));
   const past = all.filter(x => !upcoming(x.p)).sort((a, b) => b.p.datum.localeCompare(a.p.datum));
-  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}?t=postup"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div></div></a>`; };
-  return `<div class="scr"><div class="top"><div data-pill>${syncPill()}</div></div><div class="top"><h1 class="h1">Prohlídky</h1><button class="sm pri" data-a="plan">+ Naplánovat</button></div>
+  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div>${p.pozn ? `<div class="u">${esc(p.pozn)}</div>` : ''}</div><button class="x" data-a="pr-del" data-nid="${it.id}" data-m="${esc(JSON.stringify({ id: p.id, datum: p.datum, pozn: p.pozn || '' }))}" aria-label="Smazat prohlídku">×</button></a>`; };
+  return `<div class="scr"><div class="top"><h1 class="h1">Prohlídky</h1><button class="sm pri" data-a="plan">+ Naplánovat</button></div>
     <div class="sec"><h2>Naplánované</h2><span>${fut.length}</span></div><div class="list">${fut.map(row).join('') || '<div class="empty">Žádná naplánovaná prohlídka.</div>'}</div>
     ${past.length ? `<div class="sec"><h2>Proběhlé</h2><span>${past.length}</span></div><div class="list">${past.map(row).join('')}</div>` : ''}</div>${nav('prohlidky')}`;
 }
@@ -403,7 +407,7 @@ async function viewNastaveni() {
       <div class="r"><span class="k">V telefonu uloženo</span><span class="v">${n} nabídek${est && est.usage ? ` · ${(est.usage / 1048576).toLocaleString('cs-CZ', { maximumFractionDigits: 0 })} MB` : ''}</span></div>
     </div>
     <div class="grp-h">Odesílání do počítače</div>
-    <div class="rows"><div class="r"><span class="k">Poznámky, měření, Můj postup<small>Odcházejí hned, i přes mobilní data (jednotky kB). Bez signálu počkají v telefonu.</small></span></div>
+    <div class="rows"><div class="r"><span class="k">Poznámky, měření, prohlídky<small>Odcházejí hned, i přes mobilní data (jednotky kB). Bez signálu počkají v telefonu.</small></span></div>
       <div class="r" data-outbox>${outboxRow()}</div></div>
     ${standalone ? '' : `<div class="grp-h">Na plochu</div><div class="rows"><div class="r"><span class="k">${ios ? 'V Safari klepněte na Sdílet → Přidat na plochu' : installEvt ? 'Nainstalovat aplikaci' : 'V Chrome otevřete ⋮ → Instalovat aplikaci'}<small>Aplikace se pak otevírá jako samostatná a funguje i offline.</small></span>${installEvt ? '<button class="sm" data-a="install">Instalovat</button>' : ''}</div></div>`}
     <div class="grp-h">Přihlašovací klient</div>
@@ -421,12 +425,12 @@ function viewIntro() {
     <input class="field" id="cid" data-a="client" value="${esc(clientId())}" placeholder="1234…apps.googleusercontent.com" spellcheck="false" autocomplete="off">
     <button class="btn pri" data-a="login">Přihlásit se přes Google</button>
     ${err ? `<p class="err">Přihlášení se nepodařilo (${esc(err)}).</p>` : ''}
-    <p class="hint">Napřed v rozšíření v počítači otevřete Nastavení → Telefon a připojte Google Drive – odtud aplikace data stáhne. Návod: soubor NAVOD.md.</p></div>`;
+    <p class="hint">Napřed v rozšíření v počítači otevřete Nastavení → Telefon a připojte Google Drive – odtud aplikace data stáhne. Postup je v rozšíření v Nastavení → Telefon.</p></div>`;
 }
 
-// ---------- zápisy z telefonu ----------
-// Změny se hned projeví v telefonu (překryjí stažená data) a odešlou se do Drive jako zmeny-ČAS-ZAŘÍZENÍ.json; rozšíření
-// je při příštím odeslání zpracuje (nejpozději do 5 min, když je počítač zapnutý) a zapíše do index.json (applied).
+// ---------- edits from the phone ----------
+// Edits show up on the phone immediately (overlaying downloaded data) and are uploaded to Drive as zmeny-TIME-DEVICE.json;
+// the extension applies them on its next run (within 5 min when the computer is on) and lists them in index.json (applied).
 const DEV = LS.get('dev') || (() => { const d = Math.random().toString(36).slice(2, 8); LS.set('dev', d); return d; })();
 const OB = { pending: [], sent: [] };
 async function loadOutbox() { const o = await DB.get('meta', 'outbox'); if (o) { OB.pending = o.pending || []; OB.sent = o.sent || []; } }
@@ -434,7 +438,7 @@ const saveOutbox = () => DB.put('meta', 'outbox', { pending: OB.pending, sent: O
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 async function queueOp(o) {
   o = Object.assign({ cid: newId(), at: new Date().toISOString() }, o);
-  if (o.op === 'notes.set' || o.op === 'postup.stav') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // jen poslední verze
+  if (o.op === 'notes.set' || o.op === 'postup.stav') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // keep the latest version only
   OB.pending.push(o);
   await saveOutbox();
   flushSoon();
@@ -471,7 +475,7 @@ function outboxRow() {
 function drawOutbox() { const r = document.querySelector('[data-outbox]'); if (r) r.innerHTML = outboxRow(); }
 addEventListener('online', () => flushSoon(500));
 
-// překrytí stažených dat vlastními změnami (dokud je rozšíření nezpracuje)
+// overlay downloaded data with local edits (until the extension applies them)
 const myOps = nid => OB.sent.flatMap(x => x.ops).concat(OB.pending).filter(o => o.nid === nid);
 const sameItem = (x, m) => m && ((m.id && x.id === m.id) || (!m.id && x.datum === m.datum && (x.pozn || '') === (m.pozn || '') && (x.nabidka || null) === (m.nabidka || null)));
 function applyLocal(d, o) {
@@ -491,7 +495,7 @@ function applyLocal(d, o) {
   return d;
 }
 async function getDoc(id) { const d = await DB.get('docs', id); if (!d) return d; const ops = myOps(id); return ops.length ? ops.reduce(applyLocal, JSON.parse(JSON.stringify(d))) : d; }
-// souhrny v seznamu (stav, prohlídky) podle vlastních změn
+// list summaries (status, visits) adjusted by local edits
 function idxItems() {
   const items = S.index || [];
   if (!OB.pending.length && !OB.sent.length) return items;
@@ -500,7 +504,7 @@ function idxItems() {
     return Object.assign({}, it, { stav: d.postup.stav, prohlidky: d.postup.prohlidky }); });
 }
 
-// spodní list s formulářem
+// bottom sheet with a form
 function sheet(title, body, onOk, okLabel = 'Uložit') {
   const el = document.createElement('div');
   el.className = 'shbg';
@@ -515,7 +519,6 @@ function sheet(title, body, onOk, okLabel = 'Uložit') {
 }
 const MISTA = ['ložnice, okna zavřená', 'ložnice, okna otevřená', 'obývák', 'balkon', 'venku před domem', 'dvůr'];
 const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
-const numKc = v => { const n = Number(String(v || '').replace(/[^\d]/g, '')); return n || null; };
 const ACTIONS = {
   'meas-add': () => { const id = route().id; sheet('Měření hluku', `<label class="lbl">Hodnota (dB)</label><input class="field big" name="db" type="number" inputmode="decimal" min="10" max="130" step="0.1" data-focus="1" placeholder="např. 42">
       <label class="lbl">Kde</label><div class="chips2" data-name="misto">${MISTA.map(m => `<button type="button" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div>
@@ -523,19 +526,10 @@ const ACTIONS = {
     v => { const db = Number(String(v.db).replace(',', '.')); if (!(db >= 10 && db <= 130)) return 'Zadejte hodnotu v dB (10–130).';
       return void queueOp({ nid: id, op: 'mereni.add', item: { db: Math.round(db * 10) / 10, misto: v.misto.trim(), t: v.t ? new Date(v.t).toISOString() : new Date().toISOString() } }); }, 'Přidat měření'); },
   'meas-del': a => { if (confirm('Smazat toto měření?')) queueOp({ nid: route().id, op: 'mereni.del', t: a.dataset.t }).then(render); },
-  'pst-del': a => { if (confirm('Smazat tento záznam?')) queueOp({ nid: route().id, op: a.dataset.k + '.del', match: JSON.parse(a.dataset.m) }).then(render); },
-  'pr-add': () => planSheet(route().id),
+  'pr-del': a => { if (confirm('Smazat tuto prohlídku?')) queueOp({ nid: +a.dataset.nid, op: 'prohlidka.del', match: JSON.parse(a.dataset.m) }).then(render); },
   'plan': () => planSheet(null),
-  'jd-add': () => { const id = route().id; sheet('Jednání o ceně', `<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${today()}">
-      <label class="lbl">Moje nabídka (Kč)</label><input class="field" name="nabidka" inputmode="numeric"><label class="lbl">Protinabídka (Kč)</label><input class="field" name="proti" inputmode="numeric">
-      <label class="lbl">Výsledek</label><input class="field" name="vysledek">`, v => { if (!numKc(v.nabidka) && !numKc(v.proti) && !v.vysledek.trim()) return 'Vyplňte nabídku, protinabídku nebo výsledek.';
-      return void queueOp({ nid: id, op: 'jednani.add', item: { id: newId(), datum: v.datum, nabidka: numKc(v.nabidka), proti: numKc(v.proti), vysledek: v.vysledek.trim() } }); }); },
-  'kc-set': async () => { const id = route().id, d = await getDoc(id), k = (d.postup || {}).konecna || {};
-    sheet('Konečná cena', `<p class="muted">Za kolik se byt prodal (např. z Atlasu cen nebo katastru) – zpřesní srovnání cen v okolí.</p><label class="lbl">Cena (Kč)</label><input class="field" name="cena" inputmode="numeric" value="${k.cena || ''}">
-      <label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${esc(k.datum || '')}"><label class="lbl">Zdroj</label><input class="field" name="zdroj" value="${esc(k.zdroj || '')}" placeholder="Atlas cen, katastr, makléř…">`,
-    v => void queueOp({ nid: id, op: 'konecna.set', konecna: numKc(v.cena) ? { cena: numKc(v.cena), datum: v.datum, zdroj: v.zdroj.trim() } : null })); }
 };
-// Prohlídka: u nabídky (id) nebo s výběrem nabídky (Prohlídky → Naplánovat)
+// Visit: for a given offer (id) or with an offer picker (Visits → Schedule)
 function planSheet(id) {
   const items = idxItems().filter(it => it.ulozeno !== false || it.vlastni);
   const pick = id ? '' : `<label class="lbl">Nabídka</label><input class="field" data-a="plan-q" placeholder="Hledat ulici, čtvrť…" autocomplete="off"><div class="pick" data-pick>${pickList(items, '')}</div><input type="hidden" name="nid">`;
@@ -544,9 +538,7 @@ function planSheet(id) {
     <label class="lbl">Poznámka</label><input class="field" name="pozn" placeholder="co jste zjistil (hluk, světlo, sousedé, stav…)">`,
   async v => { const nid = id || +v.nid; if (!nid) return 'Vyberte nabídku.'; if (!v.datum) return 'Zadejte datum.';
     await queueOp({ nid, op: 'prohlidka.add', item: { id: newId(), datum: v.datum, cas: v.cas || '', dojem: +v.dojem || null, pozn: v.pozn.trim() } });
-    // budoucí prohlídka posune stav na „Prohlídka domluvena“, jen když nabídka ještě žádný pokročilejší stav nemá
-    const it = idxItems().find(x => x.id === nid);
-    if ((v.datum > today() || (v.datum === today() && !v.dojem)) && it && (!it.stav || it.stav === 'zajimavy')) await queueOp({ nid, op: 'postup.stav', stav: 'prohlidka', duvod: '' }); }, id ? 'Uložit' : 'Naplánovat');
+}, id ? 'Uložit' : 'Naplánovat');
   if (!id) {
     const q = el.querySelector('[data-a=plan-q]'), box = el.querySelector('[data-pick]'), hid = el.querySelector('[name=nid]');
     q.addEventListener('input', () => { box.innerHTML = pickList(items, q.value); });
@@ -559,20 +551,11 @@ function pickList(items, q) {
   return l.map(it => `<button type="button" data-id="${it.id}"><b>${esc(placeOf(it) || titleOf(it))}</b><span>${esc(titleOf(it))} · ${kc(it.cena)}</span></button>`).join('') || '<p class="muted">Nic neodpovídá.</p>';
 }
 
-// ---------- editor poznámek (jako v rozšíření) ----------
+// ---------- notes editor (same as in the extension) ----------
 const TB = [['bold', 'B', 'Tučně', 'font-weight:800'], ['italic', 'I', 'Kurzíva', 'font-style:italic'], ['underline', 'U', 'Podtržení', 'text-decoration:underline'], ['strikeThrough', 'S', 'Přeškrtnutí', 'text-decoration:line-through'], '|',
   ['h3', 'H', 'Nadpis', 'font-weight:800'], ['insertUnorderedList', '•', 'Odrážky'], ['insertOrderedList', '1.', 'Číslování'], ['outdent', '⇤', 'Zmenšit odsazení'], ['indent', '⇥', 'Odsadit'], '|',
   ['link', '🔗', 'Odkaz'], ['removeFormat', 'T̸', 'Zrušit formátování']];
-async function viewNotes(id) {
-  const d = await getDoc(id);
-  if (!d) return `<div class="scr"><div class="top"><button class="ibtn" data-a="back" aria-label="Zpět">${I.back}</button></div><div class="empty">Nabídka není v telefonu.</div></div>`;
-  const P = d.poznamky;
-  return `<div class="rp-top"><button class="ibtn" data-a="back" aria-label="Zpět">${I.back}</button><b>Poznámky · ${esc(placeOf(d.lokalita) || titleOf(d))}</b><span class="nst" data-nst></span></div>
-    <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<i></i>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}"${t[3] ? ` style="${t[3]}"` : ''}>${t[1]}</button>`).join('')}</div>
-    <div class="ned notes" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div>
-    <p class="hint" style="margin:8px 20px">Ukládá se průběžně v telefonu a odešle se do počítače. Obrázky z počítače jsou tu jen jako značka.</p>`;
-}
-// text pro AI: stejný Markdown jako v rozšíření (odrážky, ### nadpisy, **tučně**, _kurzíva_, text (odkaz), [obrázek N])
+// text for AI: same Markdown as the extension (lists, ### headings, **bold**, _italic_, text (link), [obrázek N])
 function noteText(ed) {
   let i = 0;
   const inl = n => [...n.childNodes].map(x => {
@@ -584,7 +567,7 @@ function noteText(ed) {
     if (/^(UL|OL|P|DIV|H3|H4|BLOCKQUOTE)$/.test(t)) return '\n' + blk(x, 0) + '\n';
     const c = inl(x);
     if (!c.trim()) return c;
-    const [, l, core, r] = c.match(/^(\s*)([\s\S]*?)(\s*)$/), w = m => l + m + core + m + r; // mezery mimo značky (**tučně** text)
+    const [, l, core, r] = c.match(/^(\s*)([\s\S]*?)(\s*)$/), w = m => l + m + core + m + r; // keep spaces outside the markers (**bold** text)
     if (t === 'B' || t === 'STRONG') return w('**');
     if (t === 'I' || t === 'EM') return w('_');
     if (t === 'S' || t === 'STRIKE') return w('~~');
@@ -600,11 +583,12 @@ function noteText(ed) {
   }).filter(Boolean).join('\n'); };
   const blk = (el, d) => { const t = el.tagName; if (t === 'UL' || t === 'OL') return list(el, d); if (t === 'H3' || t === 'H4') return '### ' + inl(el).trim(); if (t === 'BLOCKQUOTE') return blk2(el).split('\n').map(l => l ? '> ' + l : l).join('\n'); return inl(el); };
   const blk2 = el => [...el.childNodes].map(x => x.nodeType === 1 && /^(UL|OL|H3|H4|BLOCKQUOTE|P|DIV)$/.test(x.tagName) ? '\n' + blk(x, 0) + '\n' : inl({ childNodes: [x] })).join('');
-  return blk2(ed).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return blk2(ed).replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 function wireNotes(root, id) {
-  const ed = root.querySelector('[data-ned]'), st = root.querySelector('[data-nst]');
+  const ed = root.querySelector('[data-ned]');
   if (!ed) return;
+  if (!ed.innerHTML.trim()) ed.innerHTML = ''; // an empty field shows the placeholder (:empty)
   ed.querySelectorAll('span[data-nimg]').forEach(x => x.setAttribute('contenteditable', 'false'));
   let base = null, dirty = false, t = null;
   DB.get('docs', id).then(raw => { base = raw && raw.poznamky ? raw.poznamky.at || null : null; });
@@ -612,22 +596,54 @@ function wireNotes(root, id) {
     clearTimeout(t); if (!dirty) return; dirty = false;
     const html = safeHtml(ed.innerHTML), text = noteText(ed);
     await queueOp({ nid: id, op: 'notes.set', html, text, base });
-    st.textContent = 'Uloženo v telefonu';
   };
-  ed.addEventListener('input', () => { dirty = true; st.textContent = 'Píšu…'; clearTimeout(t); t = setTimeout(save, 1200); });
+  ed.addEventListener('input', e => {
+    if (e.inputType === 'insertText' && (e.data === ' ' || e.data === '\u00a0')) { autoList() || autoLink(1); }
+    dirty = true; clearTimeout(t); t = setTimeout(save, 1200);
+  });
+  ed.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && autoLink(0)) { dirty = true; } });
   ed.addEventListener('blur', save);
-  const leave = () => { save(); removeEventListener('hashchange', leave); document.removeEventListener('visibilitychange', hide); };
+  // save before the screen is redrawn (tab switch, back) and when leaving the app
   const hide = () => { if (document.visibilityState === 'hidden') save(); };
-  addEventListener('hashchange', leave); document.addEventListener('visibilitychange', hide);
+  document.addEventListener('visibilitychange', hide);
+  S.notesFlush = () => { save(); document.removeEventListener('visibilitychange', hide); document.removeEventListener('selectionchange', keepSel); };
+  // auto-formatting while typing (as in the extension): "- " / "* " / "• " at line start = bullets, "1. " = numbering,
+  // an address (http://, https://, www.) followed by space or Enter = link
+  const up = re => { let n = getSelection().anchorNode; while (n && n !== ed) { if (n.nodeType === 1 && re.test(n.tagName)) return n; n = n.parentNode; } return null; };
+  const caret = () => { const s2 = getSelection(); if (!s2.rangeCount || !s2.isCollapsed) return null; const r = s2.getRangeAt(0); return r.startContainer.nodeType === 3 && ed.contains(r.startContainer) ? r : null; };
+  const lineStart = node => {
+    let n = node; while (n.parentNode && n.parentNode !== ed && !/^(DIV|P|H3|H4|LI|BLOCKQUOTE)$/.test(n.parentNode.tagName)) n = n.parentNode;
+    const r = document.createRange(); r.setStart(n.parentNode, 0);
+    for (let p2 = n.previousSibling; p2; p2 = p2.previousSibling) if (p2.nodeName === 'BR' || (p2.nodeType === 1 && /^(DIV|P|H3|H4|UL|OL|BLOCKQUOTE)$/.test(p2.tagName))) { r.setStartAfter(p2); break; }
+    return r;
+  };
+  function autoList() {
+    const r = caret(); if (!r || up(/^(LI|H3|H4)$/)) return false;
+    const lr = lineStart(r.startContainer); lr.setEnd(r.startContainer, r.startOffset);
+    const m = lr.toString().match(/^([-*•–]|1[.)])[\s\u00a0]$/); if (!m) return false;
+    const s2 = getSelection(); s2.removeAllRanges(); s2.addRange(lr); document.execCommand('delete');
+    document.execCommand(m[1].startsWith('1') ? 'insertOrderedList' : 'insertUnorderedList');
+    return true;
+  }
+  function autoLink(typed) {
+    const r = caret(); if (!r || up(/^A$/)) return false;
+    const node = r.startContainer, end = r.startOffset - typed, before = node.data.slice(0, end);
+    const m = before.match(/(?:^|[\s\u00a0(])((?:https?:\/\/|www\.)[^\s\u00a0]+)$/); if (!m) return false;
+    const url = m[1].replace(/[.,;:!?)\]'"]+$/, ''); if (url.length < 8) return false;
+    const start = before.length - m[1].length, lr = document.createRange(); lr.setStart(node, start); lr.setEnd(node, start + url.length);
+    const s2 = getSelection(); s2.removeAllRanges(); s2.addRange(lr);
+    document.execCommand('createLink', false, /^www\./.test(url) ? 'https://' + url : url);
+    s2.collapseToEnd(); for (let i = before.length - start - url.length + typed; i > 0; i--) s2.modify('move', 'forward', 'character');
+    return true;
+  }
   const sync = () => root.querySelectorAll('[data-cmd]').forEach(b => { let on = false; try { on = b.dataset.cmd === 'h3' ? /^h3$/i.test(document.queryCommandValue('formatBlock')) : ['bold', 'italic', 'underline', 'strikeThrough', 'insertUnorderedList', 'insertOrderedList'].includes(b.dataset.cmd) && document.queryCommandState(b.dataset.cmd); } catch (_) {} b.classList.toggle('on', !!on); });
-  // výběr v poli si pamatovat: na iPhonu klepnutí na tlačítko panelu kurzor z pole vezme a příkaz by se neprovedl
+  // remember the selection: on iPhone tapping a toolbar button takes the caret away and the command would do nothing
   let range = null;
   const keepSel = () => { const sl = getSelection(); if (sl.rangeCount && ed.contains(sl.anchorNode)) range = sl.getRangeAt(0).cloneRange(); sync(); };
   const restore = () => { ed.focus(); const sl = getSelection(); if (range) { sl.removeAllRanges(); sl.addRange(range); } else if (!ed.contains(sl.anchorNode)) { const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); sl.removeAllRanges(); sl.addRange(r); } };
   document.addEventListener('selectionchange', keepSel);
-  addEventListener('hashchange', () => document.removeEventListener('selectionchange', keepSel), { once: true });
   root.querySelectorAll('[data-cmd]').forEach(b => {
-    // příkaz už při dotyku (pointerdown s preventDefault – výběr v poli zůstane; Safari pak „click“ nevyšle), klávesnicí přes click
+    // run on touch (pointerdown with preventDefault keeps the selection; Safari then sends no click), keyboard via click
     b.addEventListener('pointerdown', e => { e.preventDefault(); run(); });
     b.addEventListener('click', e => { if (e.detail === 0) run(); });
     function run() {
@@ -641,7 +657,7 @@ function wireNotes(root, id) {
   });
 }
 
-// ---------- směrování a vykreslení ----------
+// ---------- routing and rendering ----------
 const scrollPos = new Map();
 let curKey = '', renderSeq = 0;
 function route() {
@@ -650,24 +666,26 @@ function route() {
   return { v: ['mapa', 'prohlidky', 'nastaveni'].includes(p[0]) ? p[0] : 'list' };
 }
 async function render() {
+  if (S.notesFlush) { S.notesFlush(); S.notesFlush = null; } // save unsaved notes before the field disappears
+  if (route().v === 'notes') { history.replaceState(null, '', `#/n/${route().id}?t=poznamky`); } // legacy link to the standalone editor
   const seq = ++renderSeq, r = route(), key = r.v + (r.id || '');
   const html = !LS.get('connected') && !(S.index || []).length ? viewIntro()
-    : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id) : r.v === 'notes' ? await viewNotes(r.id)
+    : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id)
     : r.v === 'prohlidky' ? viewProhlidky() : r.v === 'mapa' ? viewMapa() : r.v === 'nastaveni' ? await viewNastaveni() : viewList();
   if (seq !== renderSeq) return;
   $app.innerHTML = html;
   wireThumbs($app);
   if (r.v === 'list' && $app.querySelector('[data-a=q]')) wireList($app);
   if (r.v === 'detail') wireDetail($app, r.id);
-  if (r.v === 'notes') wireNotes($app, r.id);
+  if (r.v === 'detail' && $app.querySelector('[data-ned]')) wireNotes($app, r.id);
   setNav(html.startsWith('<div class="intro">') ? null : r.v === 'list' ? '' : ['mapa', 'prohlidky', 'nastaveni'].includes(r.v) ? r.v : null);
   if (key !== curKey) { curKey = key; window.scrollTo(0, scrollPos.get(key) || 0); }
   stickTabs();
 }
-// lepkavé záložky detailu: pod stavovým řádkem iPhonu
+// sticky detail tabs: below the iPhone status bar
 function stickTabs() { const t = document.querySelector('.tabs'); if (t) t.classList.toggle('stuck', t.getBoundingClientRect().top <= 1); }
 addEventListener('scroll', () => { stickTabs(); if (curKey) scrollPos.set(curKey, window.scrollY); }, { passive: true });
-if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; // pozici seznamu po návratu obnovuje aplikace
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; // the app restores the list position on back
 addEventListener('hashchange', render);
 addEventListener('online', () => { if (S.error === 'offline') S.error = null; syncNow(); });
 addEventListener('offline', () => { S.error = 'offline'; drawSync(); });
@@ -675,8 +693,8 @@ $app.addEventListener('click', async e => {
   const a = e.target.closest('[data-a]');
   if (!a) return;
   const act = a.dataset.a;
-  if (act === 'back') { if (history.length > 1 && sessionStorage.getItem('rai-nav')) history.back(); else location.hash = ['report', 'notes'].includes(route().v) ? `#/n/${route().id}${route().v === 'notes' ? '?t=poznamky' : ''}` : '#/'; }
-  else if (act in ACTIONS) ACTIONS[act](a);
+  if (act === 'back') { if (history.length > 1 && sessionStorage.getItem('rai-nav')) history.back(); else location.hash = route().v === 'report' ? `#/n/${route().id}` : '#/'; }
+  else if (act in ACTIONS) { e.preventDefault(); ACTIONS[act](a); } // a button inside a card link must not open the detail
   else if (act === 'flush') flush(true);
   else if (act === 'sync' || act === 'sync-now' || act === 'sync-retry') syncNow(true);
   else if (act === 'login') { const c = $app.querySelector('[data-a=client]'); if (c && c.value.trim()) LS.set('clientId', c.value.trim()); if (!clientId()) { alert('Vložte ID klienta Google.'); return; } sessionStorage.setItem('rai-return', location.hash || '#/'); login(); }
@@ -698,10 +716,10 @@ addEventListener('hashchange', () => sessionStorage.setItem('rai-nav', '1'));
   await loadOutbox();
   await render();
   if (LS.get('connected')) syncNow();
-  // při návratu do aplikace (po delší době) stáhnout změny
+  // when returning to the app (after a while) download changes
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || !LS.get('connected')) return;
-    // návrat z pozadí: přerušené stahování (iOS uspal stránku) zrušit a navázat; jinak po 10 min stáhnout změny
+    // back from background: cancel and resume a download suspended by iOS; otherwise fetch changes after 10 min
     if (S.running) { if (Date.now() - S.last > 8000 && S.ctl) S.ctl.abort(); return; }
     if (!S.at || Date.now() - S.at > 10 * 60e3 || (S.total && S.done < S.total)) syncNow();
   });

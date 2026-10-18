@@ -1,4 +1,4 @@
-// Minimální Markdown renderer pro DD reporty (vše escapováno).
+// Minimal Markdown renderer for due-diligence reports (everything escaped).
 const MD = (() => {
   const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   function inline(s) {
@@ -20,7 +20,7 @@ const MD = (() => {
       let m;
       if (/^```/.test(l)) {
         const buf = []; i++;
-        while (i < L.length && !/^```\s*$/.test(L[i])) buf.push(L[i++]); // uzavírá jen ``` bez označení jazyka
+        while (i < L.length && !/^```\s*$/.test(L[i])) buf.push(L[i++]); // closes only on ``` without a language tag
         i++; out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>'); continue;
       }
       if ((m = l.match(/^(#{1,6})\s+(.*)$/))) { out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); i++; continue; }
