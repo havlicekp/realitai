@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.2.1';
+const APP_V = '1.3.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -18,8 +18,8 @@ const apiBase = () => LS.get('base') || 'https://www.googleapis.com'; // differe
 const DB = (() => {
   let opening;
   const open = () => opening || (opening = new Promise((res, rej) => {
-    const r = indexedDB.open('rai', 1);
-    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('docs'); d.createObjectStore('thumbs'); d.createObjectStore('meta'); };
+    const r = indexedDB.open('rai', 2);
+    r.onupgradeneeded = () => { const d = r.result; for (const st of ['docs', 'thumbs', 'meta', 'photos']) if (!d.objectStoreNames.contains(st)) d.createObjectStore(st); };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   }));
   const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -29,7 +29,8 @@ const DB = (() => {
     put: (st, k, v) => tx(st, 'readwrite', s => s.put(v, k)),
     del: (st, k) => tx(st, 'readwrite', s => s.delete(k)),
     keys: async st => req((await open()).transaction(st).objectStore(st).getAllKeys()),
-    clear: async () => { for (const st of ['docs', 'thumbs', 'meta']) await tx(st, 'readwrite', s => s.clear()); }
+    all: async st => req((await open()).transaction(st).objectStore(st).getAll()),
+    clear: async () => { for (const st of ['docs', 'thumbs', 'meta', 'photos']) await tx(st, 'readwrite', s => s.clear()); }
   };
 })();
 
@@ -52,6 +53,9 @@ const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLow
 const STAVY = { zajimavy: 'Zajímavý', prohlidka: 'Prohlídka domluvena', 'po-prohlidce': 'Po prohlídce', nabidka: 'Podána nabídka', rezervace: 'Rezervace', odmitnuto: 'Odmítnuto', koupeno: 'Koupeno' };
 const I = {
   back: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+  home: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>',
+  cam: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/></svg>',
+  mic: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/></svg>',
   ext: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>',
   sync: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M3 21v-5h5"/></svg>',
   ok: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -276,7 +280,7 @@ function listBody() {
   const next = items.map(it => ({ it, p: planned(it) })).filter(x => x.p).sort((a, b) => a.p.datum.localeCompare(b.p.datum))[0];
   const nd = next && new Date(next.p.datum);
   return `${next && !q.length ? `<div class="next"><div class="d"><span>${DNY[nd.getDay()]}</span><b>${nd.getDate()}</b><span>${nd.getMonth() + 1}.</span></div>
-      <a class="x" href="#/n/${next.it.id}"><small>Nejbližší prohlídka</small><b>${esc(placeOf(next.it) || titleOf(next.it))}</b><span>${esc(titleOf(next.it))}${next.it.overit ? ` · ${next.it.overit} bodů k ověření` : ''}</span></a></div>` : ''}
+      <a class="x" href="#/n/${next.it.id}"><small>Nejbližší prohlídka</small><b>${esc(placeOf(next.it) || titleOf(next.it))}</b><span>${esc(titleOf(next.it))}${next.it.overit ? ` · ${next.it.overit} bodů k ověření` : ''}</span></a><a class="npill" href="#/n/${next.it.id}/prohlidka">Prohlídka</a></div>` : ''}
     <div class="sec"><h2>${esc(f[1])}</h2><span>${list.length} ${list.length === 1 ? 'nabídka' : list.length < 5 && list.length ? 'nabídky' : 'nabídek'}</span></div>
     <div class="list">${list.slice(0, ui.shown).map(card).join('') || `<div class="empty">${items.length ? 'Nic neodpovídá.' : S.running ? 'Stahuji data…' : 'Zatím žádná data.'}</div>`}</div>
     ${list.length > ui.shown ? `<button class="more" data-a="more">Zobrazit další (${list.length - ui.shown})</button>` : ''}`;
@@ -331,9 +335,10 @@ function tabAnalyza(d) {
   const out = [`<div class="box"><h3>Verdikt <small>${esc([an.rezim === 'screening' ? 'Screening' : 'Analýza', dat(an.datum), an.model].filter(Boolean).join(' · '))}</small></h3><div class="big">${esc(an.verdikt || '–')}</div>${an.maxCena ? `<p>Maximální cena: <b>${kc(an.maxCena)}</b></p>` : ''}${an.ko.length ? `<p class="err">KO: ${esc(an.ko.join('; '))}</p>` : ''}</div>`];
   if (an.silne.length) out.push(`<div class="box"><h3 style="color:#3E7A4C">Silné stránky</h3><div class="items">${an.silne.map(t => `<div class="it plus"><b>+</b><span>${esc(t)}</span></div>`).join('')}</div></div>`);
   if (an.rizika.length) out.push(`<div class="box"><h3 style="color:#A0453D">Rizika</h3><div class="items">${an.rizika.map(t => `<div class="it minus"><b>!</b><span>${esc(t)}</span></div>`).join('')}</div></div>`);
-  if (an.overit.length) {
+  const ov = d.overit || an.overit;
+  if (ov.length) {
     let g = null;
-    out.push(`<div class="box"><h3>Ověřit <small>${an.overit.length} bodů</small></h3><div class="items">${an.overit.map(x => { const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : ''; return h + `<div class="it"><span class="chk${x.done ? ' done' : ''}"></span><span>${esc(x.text)}</span></div>`; }).join('')}</div><p class="muted">Odškrtávání na prohlídce přibude v režimu prohlídky.</p></div>`);
+    out.push(`<div class="box"><h3>Ověřit <small>${ov.filter(x => x.done).length} z ${ov.length} hotovo</small></h3><div class="items">${ov.map(x => { const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : ''; return h + `<div class="it"><span class="chk${x.done ? ' done' : ''}"></span><span>${esc(x.text)}</span></div>`; }).join('')}</div><a class="rowlink in" href="#/n/${d.id}/prohlidka">Otevřít v režimu prohlídky</a></div>`);
   }
   if (an.kategorie.length) out.push(`<details class="box"><summary>Hodnocení podle kategorií</summary><div class="bars">${an.kategorie.map(k => `<div class="bar"><span>${esc(k.nazev)}</span><i><b class="${k.v == null ? '' : k.v < 2 ? 'q1' : k.v < 3 ? 'q2' : k.v < 3.5 ? 'q3' : k.v < 4 ? 'q4' : 'q5'}" style="width:${k.v == null ? 0 : k.v / 5 * 100}%"></b></i><b>${sc(k.v)}</b></div>${k.komentar ? `<div class="why">${esc(k.komentar)}</div>` : ''}`).join('')}</div></details>`);
   if (an.dokumenty.length) out.push(`<details class="box"><summary>Dokumenty k vyžádání</summary><div class="items">${an.dokumenty.map(t => `<div class="it"><b>·</b><span>${esc(t)}</span></div>`).join('')}</div></details>`);
@@ -350,12 +355,12 @@ function safeHtml(html) {
   return doc.body.firstChild.innerHTML;
 }
 const fmtT = t => t ? new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-function tabPoznamky(d) {
-  const out = [], P = d.poznamky;
-  // notes are edited in place (toolbar above, automatic lists and links as in the extension)
-  out.push(`<div class="box nbox"><h3>Poznámky</h3>
+// notes are edited in place (toolbar above, automatic lists and links as in the extension); used in the detail and in the visit mode
+const notesBox = (P, tall) => `<div class="box nbox"><h3>Poznámky</h3>
     <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<span class="sep"></span>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}">${t[1]}</button>`).join('')}</div>
-    <div class="ned notes" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky" data-ph="Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`);
+    <div class="ned notes${tall ? ' tall' : ''}" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky" data-ph="Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`;
+function tabPoznamky(d) {
+  const out = [notesBox(d.poznamky)];
   if ((d.prilohy || []).length) out.push(`<div class="box"><h3>Přílohy</h3><div class="items">${d.prilohy.map(a => `<div class="it"><b>·</b><span>${esc(a.name)} <span class="muted">${a.size ? Math.round(a.size / 1024).toLocaleString('cs-CZ') + ' kB' : ''}</span></span></div>`).join('')}</div><p class="muted">Soubory příloh jsou zatím jen v rozšíření v počítači.</p></div>`);
   return out.join('');
 }
@@ -370,7 +375,7 @@ async function viewDetail(id, tab) {
     <div class="sheet"><div class="head"><div style="min-width:0"><h1>${esc(titleOf(d))}</h1><div class="u">${esc(placeOf(d.lokalita) || d.nazev)}</div><div class="p">${kc(d.cena)}</div></div>${ring}</div>
       <div class="tabs" role="tablist" aria-label="Části detailu">${TABS.map(([k, l]) => `<button role="tab" data-tab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
       <div class="panel">${body}</div></div>
-    ${d.url ? `<div class="bottom"><a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">${d.vlastni ? 'Stránka nabídky' : 'Inzerát na Sreality'} ${I.ext}</a></div>` : ''}</div>`;
+    <div class="bottom">${d.url ? `<a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">Inzerát ${I.ext}</a>` : ''}<a class="btn pri" style="flex:1.6" href="#/n/${id}/prohlidka">${I.home}Prohlídka</a></div></div>`;
 }
 function wireDetail(root, id) {
   root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { history.replaceState(null, '', `#/n/${id}?t=${b.dataset.tab}`); const tabs = root.querySelector('.tabs'), y = window.scrollY, top = tabs.getBoundingClientRect().top + y; render().then(() => window.scrollTo(0, Math.min(y, top))); }));
@@ -385,7 +390,7 @@ function viewProhlidky() {
   for (const it of idxItems()) for (const p of it.prohlidky || []) if (p.datum) all.push({ it, p });
   const fut = all.filter(x => upcoming(x.p)).sort((a, b) => a.p.datum.localeCompare(b.p.datum));
   const past = all.filter(x => !upcoming(x.p)).sort((a, b) => b.p.datum.localeCompare(a.p.datum));
-  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div>${p.pozn ? `<div class="u">${esc(p.pozn)}</div>` : ''}</div><button class="x" data-a="pr-del" data-nid="${it.id}" data-m="${esc(JSON.stringify({ id: p.id, datum: p.datum, pozn: p.pozn || '' }))}" aria-label="Smazat prohlídku">×</button></a>`; };
+  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}/prohlidka"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div>${p.pozn ? `<div class="u">${esc(p.pozn)}</div>` : ''}</div><button class="x" data-a="pr-del" data-nid="${it.id}" data-m="${esc(JSON.stringify({ id: p.id, datum: p.datum, pozn: p.pozn || '' }))}" aria-label="Smazat prohlídku">×</button></a>`; };
   return `<div class="scr"><div class="top"><h1 class="h1">Prohlídky</h1><button class="sm pri" data-a="plan">+ Naplánovat</button></div>
     <div class="sec"><h2>Naplánované</h2><span>${fut.length}</span></div><div class="list">${fut.map(row).join('') || '<div class="empty">Žádná naplánovaná prohlídka.</div>'}</div>
     ${past.length ? `<div class="sec"><h2>Proběhlé</h2><span>${past.length}</span></div><div class="list">${past.map(row).join('')}</div>` : ''}</div>${nav('prohlidky')}`;
@@ -409,12 +414,14 @@ async function viewNastaveni() {
     <div class="grp-h">Odesílání do počítače</div>
     <div class="rows"><div class="r"><span class="k">Poznámky, měření, prohlídky<small>Odcházejí hned, i přes mobilní data (jednotky kB). Bez signálu počkají v telefonu.</small></span></div>
       <div class="r" data-outbox>${outboxRow()}</div></div>
+    <div class="grp-h">Fotky z prohlídky</div>
+    <div class="rows" role="radiogroup" aria-label="Kdy odesílat fotky">${FOTO_POL().map(([k, l, sub]) => `<button type="button" class="r rad" role="radio" aria-checked="${fotoPolicy() === k}" data-a="foto-pol" data-k="${k}"><span class="k">${l}<small>${sub}</small></span><span class="dot${fotoPolicy() === k ? ' on' : ''}"></span></button>`).join('')}</div>
     ${standalone ? '' : `<div class="grp-h">Na plochu</div><div class="rows"><div class="r"><span class="k">${ios ? 'V Safari klepněte na Sdílet → Přidat na plochu' : installEvt ? 'Nainstalovat aplikaci' : 'V Chrome otevřete ⋮ → Instalovat aplikaci'}<small>Aplikace se pak otevírá jako samostatná a funguje i offline.</small></span>${installEvt ? '<button class="sm" data-a="install">Instalovat</button>' : ''}</div></div>`}
     <div class="grp-h">Přihlašovací klient</div>
     <input class="field" data-a="client" value="${esc(clientId())}" placeholder="ID klienta Google" spellcheck="false" autocomplete="off">
     <p class="hint">Stejné ID jako v rozšíření (Nastavení → Telefon). Není to heslo – je veřejné.</p>
     <div style="margin-top:22px"><button class="btn danger" style="width:100%" data-a="wipe">Odpojit Google účet a smazat data z telefonu</button></div>
-    <p class="hint">Verze ${APP_V} · etapa 2 (čtení a zápisy). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
+    <p class="hint">Verze ${APP_V} · etapa 3 (režim prohlídky). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
   </div>${nav('nastaveni')}`;
 }
 function viewIntro() {
@@ -456,18 +463,19 @@ async function flush(manual) {
     await saveOutbox();
   } catch (e) { if (e instanceof NeedLogin) S.needLogin = true; } finally { S.flushing = false; drawOutbox(); }
 }
-async function apiUpload(name, body) {
+async function apiUpload(name, body, type = 'application/json') {
   const t = token();
   if (!t) throw new NeedLogin('Přihlášení vypršelo');
   const b = 'rai' + newId();
   const r = await fetch(apiBase() + '/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', headers: { Authorization: 'Bearer ' + t, 'Content-Type': `multipart/related; boundary=${b}` },
-    body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ['appDataFolder'] })}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${b}--` });
+    body: new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ['appDataFolder'] })}\r\n--${b}\r\nContent-Type: ${type}\r\n\r\n`, body, `\r\n--${b}--`]) });
   if (r.status === 401) { LS.del('token'); throw new NeedLogin('Přihlášení vypršelo'); }
   if (!r.ok) throw new Error(`Google Drive ${r.status}`);
 }
 function outboxRow() {
-  const n = OB.pending.length, w = OB.sent.length;
-  if (S.flushing) return `<span class="k">Odesílám…</span>`;
+  const n = OB.pending.length, w = OB.sent.length, ph = S.photoWait || 0;
+  if (S.flushing || S.photoUp) return `<span class="k">Odesílám…</span>`;
+  if (ph) return `<span class="k">Čeká na odeslání: ${ph} ${ph === 1 ? 'fotka' : ph < 5 ? 'fotky' : 'fotek'}${n ? ` a ${n} ${n === 1 ? 'změna' : n < 5 ? 'změny' : 'změn'}` : ''}<small>${fotoPolicy() === 'rucne' ? 'fotky se odesílají ručně' : fotoPolicy() === 'wifi' ? 'fotky čekají na Wi‑Fi' : navigator.onLine ? 'odešlou se za chvíli' : 'bez signálu – odešlou se po připojení'}</small></span><button class="sm" data-a="flush">Odeslat teď</button>`;
   if (n) return `<span class="k">Čeká na odeslání: ${n} ${n === 1 ? 'změna' : n < 5 ? 'změny' : 'změn'}<small>${navigator.onLine ? (token() ? 'odešle se za chvíli' : 'po přihlášení') : 'bez signálu – odešle se po připojení'}</small></span><button class="sm" data-a="flush">Odeslat teď</button>`;
   if (w) return `<span class="k">Odesláno<small>${w} ${w === 1 ? 'dávka čeká' : 'dávky čekají'}, až je rozšíření v počítači zpracuje (do 5 min, když je počítač zapnutý)</small></span>`;
   return `<span class="k">Vše odesláno</span>`;
@@ -492,6 +500,8 @@ function applyLocal(d, o) {
   else if (o.op === 'jednani.add') add('jednani', o.item);
   else if (o.op === 'jednani.del') del('jednani', o.match);
   else if (o.op === 'konecna.set') p.konecna = o.konecna;
+  else if (o.op === 'overit.set') { d.overit = (d.overit || []).map(x => x.key === o.key ? Object.assign({}, x, o.patch) : x).filter(x => !x.del); }
+  else if (o.op === 'overit.add') { d.overit = (d.overit || []).slice(); if (!d.overit.some(x => x.key === 'v:' + o.item.id)) d.overit.push({ key: 'v:' + o.item.id, text: o.item.text, grp: '', src: 'vlastni', done: false }); }
   return d;
 }
 async function getDoc(id) { const d = await DB.get('docs', id); if (!d) return d; const ops = myOps(id); return ops.length ? ops.reduce(applyLocal, JSON.parse(JSON.stringify(d))) : d; }
@@ -662,12 +672,124 @@ function wireNotes(root, id) {
   });
 }
 
+// ---------- visit mode (stage 3): verify list, notes, photos, noise ----------
+const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const FOTO_POL = () => ios
+  ? [['hned', 'Hned', 'I přes mobilní data – po prohlídce jsou fotky hned v počítači.'], ['rucne', 'Jen ručně', 'Počkají na „Odeslat teď“. iPhone webové aplikaci neřekne, zda jde o Wi‑Fi.']]
+  : [['hned', 'Hned', 'I přes mobilní data – po prohlídce jsou fotky hned v počítači.'], ['wifi', 'Jen přes Wi‑Fi', 'Na datech počkají a odejdou samy po připojení k Wi‑Fi.']];
+const fotoPolicy = () => { const p = LS.get('fotoPol') || 'hned'; return FOTO_POL().some(x => x[0] === p) ? p : 'hned'; };
+const VTABS = [['body', 'Ověřit', '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'], ['pozn', 'Poznámky', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
+  ['foto', 'Fotky', '<path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/>'], ['hluk', 'Hluk', '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/>']];
+const V = { editing: null, menu: null };
+function visitWhen(d) {
+  const l = ((d.postup || {}).prohlidky || []).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || ''))));
+  const t = l.find(p => p.datum === today()) || l.find(upcoming);
+  if (!t) return 'PROHLÍDKA';
+  const dd = new Date(t.datum);
+  return `PROHLÍDKA · ${t.datum === today() ? 'DNES' : `${DNY[dd.getDay()]} ${dd.getDate()}. ${dd.getMonth() + 1}.`}${t.cas ? ' ' + esc(t.cas) : ''}`;
+}
+async function viewVisit(id, tab) {
+  const d = await getDoc(id);
+  if (!d) return `<div class="scr"><div class="top"><button class="ibtn" data-a="back" aria-label="Zpět">${I.back}</button></div><div class="empty">Nabídka není v telefonu.</div></div>`;
+  tab = VTABS.some(t => t[0] === tab) ? tab : 'body';
+  let body = '', bar = '';
+  if (tab === 'body') {
+    const ov = d.overit || [], done = ov.filter(x => x.done).length;
+    let g = null;
+    body = `<div class="box"><h3>Ověřit <small>${done} z ${ov.length} hotovo</small></h3>${ov.length ? ov.map(x => {
+      const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : '';
+      return h + `<div class="q${x.done ? ' done' : ''}"><button class="qc" role="checkbox" aria-checked="${x.done}" aria-label="Hotovo" data-a="q-tog" data-k="${esc(x.key)}">${x.done ? '✓' : ''}</button>
+        <div class="qt"><div>${esc(x.text)}</div><small>${x.src === 'vlastni' ? 'vlastní' : 'z analýzy'}</small></div>
+        ${V.menu === x.key ? `<button class="sm" data-a="q-edit" data-k="${esc(x.key)}">Upravit</button><button class="sm del" data-a="q-del" data-k="${esc(x.key)}">Smazat</button>` : ''}
+        <button class="qm" aria-label="Další akce" data-a="q-menu" data-k="${esc(x.key)}">⋯</button></div>`; }).join('') : '<p class="muted">Analýza nemá body k ověření. Přidejte vlastní dole.</p>'}</div>`;
+    const ed = V.editing && ov.find(x => x.key === V.editing);
+    bar = `<form class="vbar" data-a-form="q-add"><input class="qin" name="t" value="${ed ? esc(ed.text) : ''}" placeholder="+ Přidat bod k ověření" aria-label="Nový bod k ověření" autocomplete="off"><button class="btn pri sm2" type="submit">${ed ? 'Uložit' : 'Přidat'}</button></form>`;
+  } else if (tab === 'pozn') body = notesBox(d.poznamky, true);
+  else if (tab === 'foto') {
+    const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
+    body = ph.length ? `<div class="pgrid">${ph.map(p => `<button class="ph" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}">${p.popis ? `<span>${esc(p.popis)}</span>` : ''}</button>`).join('')}</div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
+    body += `<p class="hint">Fotky se uloží do Příloh nabídky v počítači${fotoPolicy() === 'hned' ? '' : fotoPolicy() === 'wifi' ? ' a odešlou se přes Wi‑Fi' : ' po „Odeslat teď“ v Nastavení'}.</p>`;
+    bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
+  } else {
+    const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
+    body = `<div class="box"><h3>Naměřeno${L.hlukNoc ? ` <small>hluková mapa v noci ${L.hlukNoc} dB</small>` : ''}</h3>${m.length ? `<div class="items">${m.map(x => `<div class="it row"><span><b class="db" style="background:${dbCol(x.db)}">${esc(x.db)}</b>${esc(x.misto || 'místo neuvedeno')}<small class="muted"> · ${fmtT(x.t)}${x.t ? ` · ${isNightT(x.t) ? 'noc' : 'den'}` : ''}${x.acc ? ` · 📍 ±${Math.round(x.acc)} m` : ''}</small></span><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
+    bar = `<div class="vbar"><button class="btn pri wide" data-a="meas-add">${I.mic}Změřit hluk</button></div>`;
+  }
+  return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><small>${visitWhen(d)}</small><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
+    <div class="vbody">${body}</div>
+    <div class="vfoot">${bar}<div class="vtabs" role="tablist" aria-label="Části prohlídky">${VTABS.map(([k, l, ic]) => `<button role="tab" data-vtab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg><span>${l}</span></button>`).join('')}</div></div></div>`;
+}
+const isNightT = t => { const h = new Date(t).getHours(); return h >= 22 || h < 6; };
+function wireVisit(root, id) {
+  root.querySelectorAll('[data-vtab]').forEach(b => b.addEventListener('click', () => { V.menu = null; V.editing = null; history.replaceState(null, '', `#/n/${id}/prohlidka?t=${b.dataset.vtab}`); render(); }));
+  const f = root.querySelector('[data-a-form=q-add]');
+  if (f) f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const t = f.t.value.trim(); if (!t) return;
+    if (V.editing) await queueOp({ nid: id, op: 'overit.set', key: V.editing, patch: { text: t } });
+    else await queueOp({ nid: id, op: 'overit.add', item: { id: newId(), text: t } });
+    V.editing = null; await render();
+    const n = document.querySelector('.qin'); if (n && !V.editing) n.focus();
+  });
+  const take = root.querySelector('[data-a=ph-take]');
+  if (take) take.addEventListener('change', async () => { for (const file of take.files) await addPhoto(id, file); render(); flushPhotos(); });
+  root.querySelectorAll('[data-ph]').forEach(async el => { const p = await DB.get('photos', el.dataset.ph); if (p) el.style.backgroundImage = `url("${URL.createObjectURL(new Blob([p.buf], { type: p.type }))}")`; });
+}
+Object.assign(ACTIONS, {
+  'q-tog': async a => { const id = route().id, d = await getDoc(id), x = (d.overit || []).find(y => y.key === a.dataset.k); if (x) { await queueOp({ nid: id, op: 'overit.set', key: x.key, patch: { done: !x.done } }); render(); } },
+  'q-menu': a => { V.menu = V.menu === a.dataset.k ? null : a.dataset.k; render(); },
+  'q-edit': a => { V.editing = a.dataset.k; V.menu = null; render().then(() => { const n = document.querySelector('.qin'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); },
+  'q-del': async a => { V.menu = null; await queueOp({ nid: route().id, op: 'overit.set', key: a.dataset.k, patch: { del: true } }); render(); },
+  'foto-pol': a => { LS.set('fotoPol', a.dataset.k); render(); flushPhotos(); },
+  'ph-open': async a => {
+    const p = await DB.get('photos', a.dataset.fid); if (!p) return;
+    const url = URL.createObjectURL(new Blob([p.buf], { type: p.type }));
+    const el = sheet('Fotka', `<img class="phbig" src="${url}" alt=""><label class="lbl">Popis</label><div class="chips2" data-name="popis">${['koupelna', 'kuchyň', 'ložnice', 'okna', 'sklep', 'stoupačky', 'okolí'].map(m => `<button type="button" data-v="${m}">${m}</button>`).join('')}</div>
+      <input class="field" name="popis" value="${esc(p.popis || '')}" placeholder="např. vlhkost v rohu koupelny"><button type="button" class="btn danger" data-del>Smazat fotku</button>`,
+    async v => { const popis = v.popis.trim(); if (popis === (p.popis || '')) return; p.popis = popis; await DB.put('photos', p.fid, p); if (p.uploaded) await queueOp({ nid: p.nid, op: 'foto.set', fid: p.fid, popis }); }, 'Uložit');
+    el.querySelector('[data-del]').addEventListener('click', async () => { if (!confirm('Smazat fotku? Smaže se i z Příloh v počítači.')) return; await DB.del('photos', p.fid); if (p.uploaded) await queueOp({ nid: p.nid, op: 'foto.del', fid: p.fid }); el.remove(); countPhotos(); render(); });
+  }
+});
+// Photo from the camera: shrink to 2000 px JPEG (white background), keep it on the phone and upload by the photo policy
+async function addPhoto(nid, file) {
+  let blob = file;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }), k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+    blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+  } catch (_) {}
+  const fid = newId(), at = new Date().toISOString(), dt = at.slice(0, 16).replace('T', ' ').replace(':', '');
+  await DB.put('photos', fid, { fid, nid, at, popis: '', type: 'image/jpeg', buf: await blob.arrayBuffer(), uploaded: false, name: `prohlidka ${dt}.jpg` });
+  await countPhotos();
+}
+async function countPhotos() { S.photoWait = (await DB.all('photos')).filter(p => !p.uploaded).length; drawOutbox(); }
+const onWifi = () => { const c = navigator.connection; return !c || !c.type || c.type === 'wifi' || c.type === 'ethernet'; };
+async function flushPhotos(manual) {
+  if (S.photoUp || !navigator.onLine || !token()) return;
+  const pol = fotoPolicy();
+  if (!manual && (pol === 'rucne' || (pol === 'wifi' && !onWifi()))) return countPhotos();
+  const wait = (await DB.all('photos')).filter(p => !p.uploaded);
+  if (!wait.length) return;
+  S.photoUp = true; drawOutbox();
+  try {
+    for (const p of wait) {
+      const file = `foto-${p.nid}-${p.fid}.jpg`;
+      await apiUpload(file, new Blob([p.buf], { type: p.type }), p.type);
+      p.uploaded = true; await DB.put('photos', p.fid, p);
+      await queueOp({ nid: p.nid, op: 'foto.add', fid: p.fid, file, name: p.name, popis: p.popis, at: p.at });
+    }
+  } catch (_) {} finally { S.photoUp = false; countPhotos(); }
+}
+addEventListener('online', () => setTimeout(() => flushPhotos(), 800));
+if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener('change', () => flushPhotos());
+
 // ---------- routing and rendering ----------
 const scrollPos = new Map();
 let curKey = '', renderSeq = 0;
 function route() {
   const h = location.hash.replace(/^#\/?/, ''), [path, qs] = h.split('?'), p = path.split('/').filter(Boolean), q = new URLSearchParams(qs || '');
-  if (p[0] === 'n' && p[1]) return { v: p[2] === 'report' ? 'report' : p[2] === 'poznamky' ? 'notes' : 'detail', id: +p[1], tab: q.get('t') };
+  if (p[0] === 'n' && p[1]) return { v: { report: 'report', poznamky: 'notes', prohlidka: 'visit' }[p[2]] || 'detail', id: +p[1], tab: q.get('t') };
   return { v: ['mapa', 'prohlidky', 'nastaveni'].includes(p[0]) ? p[0] : 'list' };
 }
 async function render() {
@@ -675,14 +797,15 @@ async function render() {
   if (route().v === 'notes') { history.replaceState(null, '', `#/n/${route().id}?t=poznamky`); } // legacy link to the standalone editor
   const seq = ++renderSeq, r = route(), key = r.v + (r.id || '');
   const html = !LS.get('connected') && !(S.index || []).length ? viewIntro()
-    : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id)
+    : r.v === 'detail' ? await viewDetail(r.id, r.tab) : r.v === 'report' ? await viewReport(r.id) : r.v === 'visit' ? await viewVisit(r.id, r.tab)
     : r.v === 'prohlidky' ? viewProhlidky() : r.v === 'mapa' ? viewMapa() : r.v === 'nastaveni' ? await viewNastaveni() : viewList();
   if (seq !== renderSeq) return;
   $app.innerHTML = html;
   wireThumbs($app);
   if (r.v === 'list' && $app.querySelector('[data-a=q]')) wireList($app);
   if (r.v === 'detail') wireDetail($app, r.id);
-  if (r.v === 'detail' && $app.querySelector('[data-ned]')) wireNotes($app, r.id);
+  if ((r.v === 'detail' || r.v === 'visit') && $app.querySelector('[data-ned]')) wireNotes($app, r.id);
+  if (r.v === 'visit') wireVisit($app, r.id);
   setNav(html.startsWith('<div class="intro">') ? null : r.v === 'list' ? '' : ['mapa', 'prohlidky', 'nastaveni'].includes(r.v) ? r.v : null);
   if (key !== curKey) { curKey = key; window.scrollTo(0, scrollPos.get(key) || 0); }
   stickTabs();
@@ -698,9 +821,9 @@ $app.addEventListener('click', async e => {
   const a = e.target.closest('[data-a]');
   if (!a) return;
   const act = a.dataset.a;
-  if (act === 'back') { if (history.length > 1 && sessionStorage.getItem('rai-nav')) history.back(); else location.hash = route().v === 'report' ? `#/n/${route().id}` : '#/'; }
+  if (act === 'back') { if (history.length > 1 && sessionStorage.getItem('rai-nav')) history.back(); else location.hash = ['report', 'visit'].includes(route().v) ? `#/n/${route().id}` : '#/'; }
   else if (act in ACTIONS) { e.preventDefault(); ACTIONS[act](a); } // a button inside a card link must not open the detail
-  else if (act === 'flush') flush(true);
+  else if (act === 'flush') { flush(true); flushPhotos(true); }
   else if (act === 'sync' || act === 'sync-now' || act === 'sync-retry') syncNow(true);
   else if (act === 'login') { const c = $app.querySelector('[data-a=client]'); if (c && c.value.trim()) LS.set('clientId', c.value.trim()); if (!clientId()) { alert('Vložte ID klienta Google.'); return; } sessionStorage.setItem('rai-return', location.hash || '#/'); login(); }
   else if (act === 'install' && installEvt) { installEvt.prompt(); installEvt = null; }
@@ -719,7 +842,9 @@ addEventListener('hashchange', () => sessionStorage.setItem('rai-nav', '1'));
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   await loadLocal();
   await loadOutbox();
+  await countPhotos();
   await render();
+  setTimeout(() => flushPhotos(), 2000);
   if (LS.get('connected')) syncNow();
   // when returning to the app (after a while) download changes
   document.addEventListener('visibilitychange', () => {
