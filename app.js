@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.7';
+const APP_V = '1.6.9';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -56,6 +56,7 @@ const I = {
   home: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>',
   cam: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/></svg>',
   mic: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/></svg>',
+  pen: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   ext: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>',
   sync: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M3 21v-5h5"/></svg>',
   ok: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -405,7 +406,7 @@ function viewProhlidky() {
   for (const it of idxItems()) for (const p of it.prohlidky || []) if (p.datum) all.push({ it, p });
   const fut = all.filter(x => upcoming(x.p)).sort((a, b) => a.p.datum.localeCompare(b.p.datum));
   const past = all.filter(x => !upcoming(x.p)).sort((a, b) => b.p.datum.localeCompare(a.p.datum));
-  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}/prohlidka"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><span class="tag date">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}</span>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div>${p.pozn ? `<div class="u">${esc(p.pozn)}</div>` : ''}</div><button class="x" data-a="pr-del" data-nid="${it.id}" data-m="${esc(JSON.stringify({ id: p.id, datum: p.datum, pozn: p.pozn || '' }))}" aria-label="Smazat prohlídku">×</button></a>`; };
+  const row = ({ it, p }) => { const d = new Date(p.datum); return `<a class="card" href="#/n/${it.id}/prohlidka"><div class="th" data-th="${it.id}" style="width:64px;height:64px"></div><div class="bd"><div class="tags"><button class="tag date tbtn" data-a="visit-edit" data-nid="${it.id}" data-m="${esc(JSON.stringify({ id: p.id, datum: p.datum, cas: p.cas || '', pozn: p.pozn || '' }))}" aria-label="Změnit datum a čas prohlídky">${DNY[d.getDay()]} ${d.getDate()}. ${d.getMonth() + 1}.${p.cas ? ' ' + esc(p.cas) : ''}${I.pen}</button>${p.dojem ? `<span class="tag">dojem ${p.dojem}/5</span>` : ''}</div><div class="t">${esc(placeOf(it) || titleOf(it))}</div><div class="u">${esc(titleOf(it))} · ${kc(it.cena)}</div>${p.pozn ? `<div class="u">${esc(p.pozn)}</div>` : ''}</div><button class="x" data-a="pr-del" data-nid="${it.id}" data-m="${esc(JSON.stringify({ id: p.id, datum: p.datum, pozn: p.pozn || '' }))}" aria-label="Smazat prohlídku">×</button></a>`; };
   return `<div class="scr"><div class="top"><h1 class="h1">Prohlídky</h1><button class="sm pri" data-a="plan">+ Naplánovat</button></div>
     <div class="sec"><h2>Naplánované</h2><span>${fut.length}</span></div><div class="list">${fut.map(row).join('') || '<div class="empty">Žádná naplánovaná prohlídka.</div>'}</div>
     ${past.length ? `<div class="sec"><h2>Proběhlé</h2><span>${past.length}</span></div><div class="list">${past.map(row).join('')}</div>` : ''}</div>${nav('prohlidky')}`;
@@ -597,6 +598,7 @@ function applyLocal(d, o) {
   else if (o.op === 'postup.stav') { p.stav = o.stav; p.duvod = o.duvod; p.stavAt = o.at; }
   else if (o.op === 'prohlidka.add') add('prohlidky', o.item);
   else if (o.op === 'prohlidka.del') del('prohlidky', o.match);
+  else if (o.op === 'prohlidka.set') { const i = p.prohlidky.findIndex(x => sameItem(x, o.match)); if (i >= 0) p.prohlidky[i] = Object.assign({}, p.prohlidky[i], o.patch, { local: true }); }
   else if (o.op === 'jednani.add') add('jednani', o.item);
   else if (o.op === 'jednani.del') del('jednani', o.match);
   else if (o.op === 'konecna.set') p.konecna = o.konecna;
@@ -638,6 +640,15 @@ const ACTIONS = {
   'meas-del': a => { if (confirm('Smazat toto měření?')) queueOp({ nid: route().id, op: 'mereni.del', t: a.dataset.t }).then(render); },
   'pr-del': a => { if (confirm('Smazat tuto prohlídku?')) queueOp({ nid: +a.dataset.nid, op: 'prohlidka.del', match: JSON.parse(a.dataset.m) }).then(render); },
   'plan': () => planSheet(null),
+  // change date and time of the visit (visit header or the Visits list); without a visit schedule a new one
+  'visit-edit': async a => {
+    const id = +(a.dataset.nid || route().id), d = await getDoc(id);
+    const t = a.dataset.m ? JSON.parse(a.dataset.m) : d && visitOf(d);
+    if (!t) return planSheet(id, () => render());
+    const m = { id: t.id, datum: t.datum, pozn: t.pozn || '' };
+    sheet('Změnit prohlídku', `<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${esc(t.datum)}"><label class="lbl">Čas (nepovinné)</label><input class="field" name="cas" type="time" value="${esc(t.cas || '')}">`,
+      async v => { if (!v.datum) return 'Zadejte datum.'; if (v.datum === t.datum && (v.cas || '') === (t.cas || '')) return; await queueOp({ nid: id, op: 'prohlidka.set', match: m, patch: { datum: v.datum, cas: v.cas || '' } }); }, 'Uložit');
+  },
   // detail → Visit: with no visit planned (today or later) first ask for the date, then open the visit mode
   'visit-go': async () => { const id = route().id, d = await getDoc(id), go = () => { location.hash = `#/n/${id}/prohlidka`; };
     if (((d && d.postup && d.postup.prohlidky) || []).some(p => p.datum && p.datum >= today())) go(); else planSheet(id, go); },
@@ -647,10 +658,9 @@ function planSheet(id, after) {
   const items = idxItems().filter(it => it.ulozeno !== false || it.vlastni);
   const pick = id ? '' : `<label class="lbl">Nabídka</label><input class="field" data-a="plan-q" placeholder="Hledat ulici, čtvrť…" autocomplete="off"><div class="pick" data-pick>${pickList(items, '')}</div><input type="hidden" name="nid">`;
   const el = sheet(id && !after ? 'Prohlídka' : 'Naplánovat prohlídku', `${pick}<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${today()}">
-    <label class="lbl">Čas (nepovinné)</label><input class="field" name="cas" type="time"><label class="lbl">Dojem (po prohlídce)</label><div class="chips2" data-name="dojem">${[1, 2, 3, 4, 5].map(n => `<button type="button" data-v="${n}">${n}</button>`).join('')}</div><input type="hidden" name="dojem">
-    <label class="lbl">Poznámka</label><input class="field" name="pozn" placeholder="co jste zjistil (hluk, světlo, sousedé, stav…)">`,
+    <label class="lbl">Čas (nepovinné)</label><input class="field" name="cas" type="time">`,
   async v => { const nid = id || +v.nid; if (!nid) return 'Vyberte nabídku.'; if (!v.datum) return 'Zadejte datum.';
-    await queueOp({ nid, op: 'prohlidka.add', item: { id: newId(), datum: v.datum, cas: v.cas || '', dojem: +v.dojem || null, pozn: v.pozn.trim() } });
+    await queueOp({ nid, op: 'prohlidka.add', item: { id: newId(), datum: v.datum, cas: v.cas || '', dojem: null, pozn: '' } });
     if (after) after(nid);
 }, id && !after ? 'Uložit' : 'Naplánovat');
   if (!id) {
@@ -785,10 +795,10 @@ const fotoPolicy = () => { const p = LS.get('fotoPol') || 'hned'; return FOTO_PO
 const VTABS = [['body', 'Ověřit', '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'], ['pozn', 'Poznámky', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
   ['foto', 'Fotky', '<path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/>'], ['hluk', 'Hluk', '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/>']];
 const V = { editing: null, menu: null };
+const visitOf = d => { const l = ((d.postup || {}).prohlidky || []).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || '')))); return l.find(p => p.datum === today()) || l.find(upcoming) || null; };
 function visitWhen(d) {
-  const l = ((d.postup || {}).prohlidky || []).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || ''))));
-  const t = l.find(p => p.datum === today()) || l.find(upcoming);
-  if (!t) return 'PROHLÍDKA';
+  const t = visitOf(d);
+  if (!t) return 'PROHLÍDKA · NAPLÁNOVAT';
   const dd = new Date(t.datum);
   return `PROHLÍDKA · ${t.datum === today() ? 'DNES' : `${DNY[dd.getDay()]} ${dd.getDate()}. ${dd.getMonth() + 1}.`}${t.cas ? ' ' + esc(t.cas) : ''}`;
 }
@@ -820,7 +830,7 @@ async function viewVisit(id, tab) {
     if (L.hlukNoc) body += `<p class="hint">Hluková mapa Prahy v noci u domu: ${L.hlukNoc} dB.</p>`;
     bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
-  return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><small>${visitWhen(d)}</small><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
+  return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><button class="vwhen" data-a="visit-edit" aria-label="Změnit datum a čas prohlídky">${visitWhen(d)} ${I.pen}</button><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
     <div class="vbody">${body}</div>
     <div class="vfoot">${bar}<div class="vtabs" role="tablist" aria-label="Části prohlídky">${VTABS.map(([k, l, ic]) => `<button role="tab" data-vtab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg><span>${l}</span></button>`).join('')}</div></div></div>`;
 }
