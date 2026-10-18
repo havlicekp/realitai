@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.12';
+const APP_V = '1.6.13';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -480,6 +480,8 @@ async function wireMapa(root) {
     img.src = url;
   }
   const list0 = draw();
+  // offers without position: the extension that sent the data is older than the map (positions came with 0.43)
+  if (!list0.length && (S.index || []).length && !(S.index || []).some(it => it.lat)) { const m = root.querySelector('[data-mmsg]'); m.hidden = false; m.textContent = 'Nabídky zatím nemají polohu. V počítači u rozšíření RealitAI klikněte na Znovu načíst a pak tady stáhněte seznam dolů v Nabídkách.'; }
   // first view: offers around the median position (a few far-away offers would zoom out to the whole region)
   if (!LS.get('mapView') && list0.length) {
     const med = k => list0.map(it => it[k]).sort((a, b) => a - b)[list0.length >> 1], cLat = med('lat'), cLon = med('lon');
