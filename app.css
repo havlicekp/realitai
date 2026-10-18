@@ -3,6 +3,7 @@
   --brand: #AD5A52; --brand-d: #8E4740; --brand-l: rgba(173,90,82,.12);
   --ok: #24663A; --ok-b: #E3F1E4; --warn: #7A4B05; --warn-b: #FBEBCC; --bad: #9B2C24; --bad-b: #F8E1DE;
   --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  --navb: max(12px, calc(var(--sab) - 14px)); /* floating bar sits over the home indicator area like iOS tab bars */
   color-scheme: light;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -15,7 +16,7 @@ h1, h2, h3, h4 { margin: 0; }
 .hidden { display: none !important; }
 
 /* screen */
-.scr { min-height: 100vh; min-height: 100dvh; padding: calc(var(--sat) + 14px) 20px calc(var(--sab) + 120px); }
+.scr { min-height: 100vh; min-height: 100dvh; padding: calc(var(--sat) + 14px) 20px calc(var(--navb) + 100px); }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; }
 .h1 { font-size: 34px; line-height: 1.1; font-weight: 800; letter-spacing: -0.02em; margin: 10px 0 14px; }
 .pill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: #E4EFE5; color: #3E6B47; max-width: 100%; }
@@ -61,7 +62,7 @@ h1, h2, h3, h4 { margin: 0; }
 .next .nx span { display: block; font-size: 13px; opacity: .9; margin-top: 2px; }
 
 /* main navigation – floating */
-.nav { position: fixed; left: 16px; right: 16px; bottom: calc(var(--sab) + 16px); height: 68px; border-radius: 26px; background: #fff; box-shadow: 0 8px 28px rgba(29,27,25,.14); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 4px; padding: 0 5px; z-index: 20; max-width: 520px; margin: 0 auto; }
+.nav { position: fixed; left: 16px; right: 16px; bottom: var(--navb); height: 68px; border-radius: 26px; background: #fff; box-shadow: 0 8px 28px rgba(29,27,25,.14); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 4px; padding: 0 5px; z-index: 20; max-width: 520px; margin: 0 auto; }
 .nav a { display: flex; flex-direction: column; align-items: center; gap: 3px; justify-content: center; min-height: 58px; border-radius: 20px; color: var(--muted); font-size: 11px; font-weight: 600; }
 .nav[hidden] { display: none; }
 .nav a.on { background: var(--brand-l); color: var(--brand); font-weight: 800; }
@@ -279,7 +280,7 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .mk { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 15px; border: 3px solid #fff; box-sizing: border-box; font: 800 10px Manrope, system-ui, sans-serif; color: var(--ink); box-shadow: 0 1px 4px rgba(0,0,0,.25); }
 .mk.q0 { background: #B9B0A5; } .mk.q1 { background: #D27A70; } .mk.q2 { background: #E2A46B; } .mk.q3 { background: #D9C46A; } .mk.q4 { background: #93BF7C; } .mk.q5 { background: #5C9E62; }
 .mdb { display: flex; align-items: center; justify-content: center; width: 30px; height: 20px; border-radius: 6px; border: 1.5px solid var(--ink); box-sizing: border-box; font: 800 10px Manrope, system-ui, sans-serif; color: var(--ink); }
-.mcard { position: absolute; left: 16px; right: 16px; bottom: calc(var(--sab) + 96px); z-index: 600; background: var(--card); border-radius: 22px; box-shadow: 0 8px 28px rgba(29,27,25,.16); padding: 12px; display: flex; gap: 12px; align-items: center; max-width: 528px; margin: 0 auto; }
+.mcard { position: absolute; left: 16px; right: 16px; bottom: calc(var(--navb) + 80px); z-index: 600; background: var(--card); border-radius: 22px; box-shadow: 0 8px 28px rgba(29,27,25,.16); padding: 12px; display: flex; gap: 12px; align-items: center; max-width: 528px; margin: 0 auto; }
 .mcard .th { flex: none; width: 72px; height: 72px; border-radius: 14px; background: #CFC6BB center/cover no-repeat; }
 .mcard a { color: var(--ink); min-width: 0; flex: 1; } .mcard b { display: block; font-size: 15px; font-weight: 800; } .mcard span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; } .mcard small { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
 .mcard .go { flex: none; width: 40px; height: 40px; border-radius: 20px; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800; }
