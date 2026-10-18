@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.7.0';
+const APP_V = '1.8.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -50,6 +50,8 @@ const dbCol = v => v < 40 ? '#A9CF95' : v < 50 ? '#D9C46A' : v < 55 ? '#E9A86A' 
 const titleOf = it => [it.dispozice, it.plocha ? it.plocha + ' m²' : ''].filter(Boolean).join(' · ') || it.nazev || 'Nabídka';
 const placeOf = it => [it.ulice, it.cast || it.mesto].filter(Boolean).join(', ');
 const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// verify lists: "Z analýzy" plus own lists (older data have no lists)
+const listsOf = d => (d && d.overitLists) || [{ id: 'analyza', nazev: 'Z analýzy' }];
 const visitsOf = d => (d && (d.prohlidky || (d.postup || {}).prohlidky)) || []; // older data kept visits under postup
 const I = {
   back: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
@@ -334,7 +336,7 @@ function tabAnalyza(d) {
   const out = [`<div class="box"><h3>Verdikt <small>${esc([an.rezim === 'screening' ? 'Screening' : 'Analýza', dat(an.datum), an.model].filter(Boolean).join(' · '))}</small></h3><div class="big">${esc(an.verdikt || '–')}</div>${an.maxCena ? `<p>Maximální cena: <b>${kc(an.maxCena)}</b></p>` : ''}${an.ko.length ? `<p class="err">KO: ${esc(an.ko.join('; '))}</p>` : ''}</div>`];
   if (an.silne.length) out.push(`<div class="box"><h3 style="color:#3E7A4C">Silné stránky</h3><div class="items">${an.silne.map(t => `<div class="it plus"><b>+</b><span>${esc(t)}</span></div>`).join('')}</div></div>`);
   if (an.rizika.length) out.push(`<div class="box"><h3 style="color:#A0453D">Rizika</h3><div class="items">${an.rizika.map(t => `<div class="it minus"><b>!</b><span>${esc(t)}</span></div>`).join('')}</div></div>`);
-  const ov = d.overit || an.overit;
+  const ov = d.overit ? d.overit.filter(x => (x.list || 'analyza') === 'analyza') : an.overit;
   if (ov.length) {
     let g = null;
     out.push(`<div class="box"><h3>Ověřit <small>${ov.filter(x => x.done).length} z ${ov.length} hotovo</small></h3><div class="items">${ov.map(x => { const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : ''; return h + `<div class="it"><span class="chk${x.done ? ' done' : ''}"></span><span>${esc(x.text)}</span></div>`; }).join('')}</div><a class="rowlink in" href="#/n/${d.id}/prohlidka">Otevřít v režimu prohlídky</a></div>`);
@@ -598,7 +600,9 @@ function applyLocal(d, o) {
   else if (o.op === 'prohlidka.del') { const i = v.findIndex(x => sameItem(x, o.match)); if (i >= 0) v.splice(i, 1); }
   else if (o.op === 'prohlidka.set') { const i = v.findIndex(x => sameItem(x, o.match)); if (i >= 0) v[i] = Object.assign({}, v[i], o.patch, { local: true }); }
   else if (o.op === 'overit.set') { d.overit = (d.overit || []).map(x => x.key === o.key ? Object.assign({}, x, o.patch) : x).filter(x => !x.del); }
-  else if (o.op === 'overit.add') { d.overit = (d.overit || []).slice(); if (!d.overit.some(x => x.key === 'v:' + o.item.id)) d.overit.push({ key: 'v:' + o.item.id, text: o.item.text, grp: '', src: 'vlastni', done: false }); }
+  else if (o.op === 'overit.add') { d.overit = (d.overit || []).slice(); if (!d.overit.some(x => x.key === 'v:' + o.item.id)) d.overit.push({ key: 'v:' + o.item.id, list: o.item.list || 'analyza', text: o.item.text, grp: '', src: 'vlastni', done: false, odpoved: '' }); }
+  else if (o.op === 'overit.list.add') { d.overitLists = listsOf(d).slice(); if (!d.overitLists.some(l => l.id === o.list.id)) d.overitLists.push({ id: o.list.id, nazev: o.list.nazev }); }
+  else if (o.op === 'overit.list.set') { d.overitLists = listsOf(d).map(l => l.id === o.id ? Object.assign({}, l, o.patch) : l).filter(l => !l.del); if (o.patch.del) d.overit = (d.overit || []).filter(x => (x.list || 'analyza') !== o.id); }
   return d;
 }
 async function getDoc(id) { const d = await DB.get('docs', id); if (!d) return d; const ops = myOps(id); return ops.length ? ops.reduce(applyLocal, JSON.parse(JSON.stringify(d))) : d; }
@@ -803,7 +807,7 @@ const FOTO_POL = () => ios
 const fotoPolicy = () => { const p = LS.get('fotoPol') || 'hned'; return FOTO_POL().some(x => x[0] === p) ? p : 'hned'; };
 const VTABS = [['body', 'Ověřit', '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'], ['pozn', 'Poznámky', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
   ['foto', 'Fotky', '<path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/>'], ['hluk', 'Hluk', '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/>']];
-const V = { editing: null, menu: null };
+const V = { list: LS.get('ovList') || 'analyza' };
 const visitOf = d => { const l = visitsOf(d).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || '')))); return l.find(p => p.datum === today()) || l.find(upcoming) || null; };
 function visitWhen(d) {
   const t = visitOf(d);
@@ -817,16 +821,15 @@ async function viewVisit(id, tab) {
   tab = VTABS.some(t => t[0] === tab) ? tab : 'body';
   let body = '', bar = '';
   if (tab === 'body') {
-    const ov = d.overit || [], done = ov.filter(x => x.done).length;
+    const lists = listsOf(d), cur = lists.some(l => l.id === V.list) ? V.list : 'analyza';
+    const ov = (d.overit || []).filter(x => (x.list || 'analyza') === cur), done = ov.filter(x => x.done).length;
     let g = null;
-    body = `<div class="box"><h3>Ověřit <small>${done} z ${ov.length} hotovo</small></h3>${ov.length ? ov.map(x => {
+    body = `<div class="ovsel"><select class="field" data-a="q-list" aria-label="Seznam k ověření">${lists.map(l => `<option value="${esc(l.id)}"${l.id === cur ? ' selected' : ''}>${esc(l.nazev)}</option>`).join('')}<option value="__new">+ Nový seznam…</option></select>${cur !== 'analyza' ? `<button class="qm" data-a="q-listmenu" aria-label="Upravit seznam">⋯</button>` : ''}</div>
+      <div class="box"><h3>${esc((lists.find(l => l.id === cur) || {}).nazev || '')} <small>${done} z ${ov.length} hotovo</small></h3>${ov.length ? ov.map(x => {
       const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : '';
       return h + `<div class="q${x.done ? ' done' : ''}"><button class="qc" role="checkbox" aria-checked="${x.done}" aria-label="Hotovo" data-a="q-tog" data-k="${esc(x.key)}">${x.done ? '✓' : ''}</button>
-        <div class="qt"><div>${esc(x.text)}</div><small>${x.src === 'vlastni' ? 'vlastní' : 'z analýzy'}</small></div>
-        ${V.menu === x.key ? `<button class="sm" data-a="q-edit" data-k="${esc(x.key)}">Upravit</button><button class="sm del" data-a="q-del" data-k="${esc(x.key)}">Smazat</button>` : ''}
-        <button class="qm" aria-label="Další akce" data-a="q-menu" data-k="${esc(x.key)}">⋯</button></div>`; }).join('') : '<p class="muted">Analýza nemá body k ověření. Přidejte vlastní dole.</p>'}</div>`;
-    const ed = V.editing && ov.find(x => x.key === V.editing);
-    bar = `<form class="vbar" data-a-form="q-add"><input class="qin" name="t" value="${ed ? esc(ed.text) : ''}" placeholder="+ Přidat bod k ověření" aria-label="Nový bod k ověření" autocomplete="off"><button class="btn pri sm2" type="submit">${ed ? 'Uložit' : 'Přidat'}</button></form>`;
+        <button class="qt" data-a="q-open" data-k="${esc(x.key)}"><div>${esc(x.text)}</div>${x.odpoved ? `<p class="qa">${esc(x.odpoved)}</p>` : ''}<small>${x.src === 'vlastni' ? 'vlastní' : 'z analýzy'} · ${x.odpoved ? 'upravit odpověď' : 'přidat odpověď'}</small></button></div>`; }).join('') : `<p class="muted">${cur === 'analyza' ? 'Analýza nemá body k ověření. Přidejte vlastní dole.' : 'Seznam je prázdný. Přidejte body dole.'}</p>`}</div>`;
+    bar = `<form class="vbar" data-a-form="q-add"><input class="qin" name="t" placeholder="+ Přidat bod k ověření" aria-label="Nový bod k ověření" autocomplete="off"><button class="btn pri sm2" type="submit">Přidat</button></form>`;
   } else if (tab === 'pozn') body = notesBox(d.poznamky, true);
   else if (tab === 'foto') {
     const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
@@ -845,15 +848,24 @@ async function viewVisit(id, tab) {
 }
 const isNightT = t => { const h = new Date(t).getHours(); return h >= 22 || h < 6; };
 function wireVisit(root, id) {
-  root.querySelectorAll('[data-vtab]').forEach(b => b.addEventListener('click', () => { V.menu = null; V.editing = null; history.replaceState(null, '', `#/n/${id}/prohlidka?t=${b.dataset.vtab}`); render(); }));
+  root.querySelectorAll('[data-vtab]').forEach(b => b.addEventListener('click', () => { history.replaceState(null, '', `#/n/${id}/prohlidka?t=${b.dataset.vtab}`); render(); }));
   const f = root.querySelector('[data-a-form=q-add]');
   if (f) f.addEventListener('submit', async e => {
     e.preventDefault();
     const t = f.t.value.trim(); if (!t) return;
-    if (V.editing) await queueOp({ nid: id, op: 'overit.set', key: V.editing, patch: { text: t } });
-    else await queueOp({ nid: id, op: 'overit.add', item: { id: newId(), text: t } });
-    V.editing = null; await render();
-    const n = document.querySelector('.qin'); if (n && !V.editing) n.focus();
+    const d = await getDoc(id), cur = listsOf(d).some(l => l.id === V.list) ? V.list : 'analyza';
+    await queueOp({ nid: id, op: 'overit.add', item: { id: newId(), text: t, list: cur } });
+    await render();
+    const n = document.querySelector('.qin'); if (n) n.focus();
+  });
+  const ql = root.querySelector('[data-a=q-list]');
+  if (ql) ql.addEventListener('change', () => {
+    if (ql.value !== '__new') { V.list = ql.value; LS.set('ovList', V.list); return render(); }
+    sheet('Nový seznam', '<label class="lbl">Název</label><input class="field" name="nazev" data-focus="1" placeholder="např. Dotazy na makléře po telefonu">', async v => {
+      const n = v.nazev.trim(); if (!n) return 'Zadejte název.';
+      const lid = 'l' + newId(); V.list = lid; LS.set('ovList', lid);
+      await queueOp({ nid: id, op: 'overit.list.add', list: { id: lid, nazev: n } }); }, 'Vytvořit');
+    render();
   });
   const take = root.querySelector('[data-a=ph-take]');
   if (take) take.addEventListener('change', async () => {
@@ -867,9 +879,21 @@ function wireVisit(root, id) {
 }
 Object.assign(ACTIONS, {
   'q-tog': async a => { const id = route().id, d = await getDoc(id), x = (d.overit || []).find(y => y.key === a.dataset.k); if (x) { await queueOp({ nid: id, op: 'overit.set', key: x.key, patch: { done: !x.done } }); render(); } },
-  'q-menu': a => { V.menu = V.menu === a.dataset.k ? null : a.dataset.k; render(); },
-  'q-edit': a => { V.editing = a.dataset.k; V.menu = null; render().then(() => { const n = document.querySelector('.qin'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); },
-  'q-del': async a => { V.menu = null; await queueOp({ nid: route().id, op: 'overit.set', key: a.dataset.k, patch: { del: true } }); render(); },
+  // item detail: text and answer / details; delete
+  'q-open': async a => {
+    const id = route().id, d = await getDoc(id), x = (d.overit || []).find(y => y.key === a.dataset.k); if (!x) return;
+    const el = sheet('Bod k ověření', `<label class="lbl">Co ověřit</label><input class="field" name="text" value="${esc(x.text)}">
+      <label class="lbl">Odpověď, detaily</label><textarea class="field area" name="odpoved" rows="4" placeholder="Co jste zjistil, co řekl makléř…" data-focus="1">${esc(x.odpoved || '')}</textarea>
+      <button type="button" class="btn danger" data-qdel>Smazat bod</button>`,
+    async v => { const p = {}; if (v.text.trim() && v.text.trim() !== x.text) p.text = v.text.trim(); if (v.odpoved.trim() !== (x.odpoved || '')) p.odpoved = v.odpoved.trim(); if (Object.keys(p).length) await queueOp({ nid: id, op: 'overit.set', key: x.key, patch: p }); }, 'Uložit');
+    el.querySelector('[data-qdel]').addEventListener('click', async () => { if (!confirm('Smazat tento bod?')) return; await queueOp({ nid: id, op: 'overit.set', key: x.key, patch: { del: true } }); el.remove(); render(); });
+  },
+  'q-listmenu': async () => {
+    const id = route().id, d = await getDoc(id), l = listsOf(d).find(y => y.id === V.list); if (!l) return;
+    const el = sheet('Seznam', `<label class="lbl">Název</label><input class="field" name="nazev" value="${esc(l.nazev)}"><button type="button" class="btn danger" data-ldel>Smazat seznam</button>`,
+      async v => { const n = v.nazev.trim(); if (n && n !== l.nazev) await queueOp({ nid: id, op: 'overit.list.set', id: l.id, patch: { nazev: n } }); }, 'Uložit');
+    el.querySelector('[data-ldel]').addEventListener('click', async () => { if (!confirm('Smazat celý seznam i s body?')) return; await queueOp({ nid: id, op: 'overit.list.set', id: l.id, patch: { del: true } }); V.list = 'analyza'; el.remove(); render(); });
+  },
   'foto-pol': a => { LS.set('fotoPol', a.dataset.k); render(); flushPhotos(); },
   'ph-open': a => photoSheet(a.dataset.fid),
   'ph-del': async a => {
