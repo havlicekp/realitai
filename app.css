@@ -302,3 +302,7 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .phs { flex: none; width: 50px; height: 50px; border: 0; border-radius: 10px; background: #CFC6BB center/cover no-repeat; }
 .mtx { flex: 1; min-width: 0; border: 0; background: none; text-align: left; padding: 0; font: inherit; color: var(--ink); }
 .mtx b { display: block; font-size: 14px; } .mtx b.ph0 { color: var(--brand); } .mtx small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* bottom sheet: the confirm button always stays visible (sticky at the bottom of the scrolling sheet) */
+.shb > .btn[type=submit] { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -10px 0 var(--bg), 0 10px 0 var(--bg); }
+.sh { padding-bottom: calc(var(--sab) + 12px); }
+.phbig { max-height: 34dvh; object-fit: contain; background: var(--soft); }
