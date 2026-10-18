@@ -248,3 +248,23 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .rad .dot { flex: none; width: 22px; height: 22px; border-radius: 11px; border: 2px solid #CFC6BB; }
 .rad .dot.on { border: 7px solid var(--brand); }
 .it small.muted { font-size: 12px; }
+/* noise meter (stage 4) */
+.meter-bg { position: fixed; inset: 0; z-index: 60; background: rgba(29,27,25,.55); display: flex; align-items: flex-end; justify-content: center; }
+.meter { width: 100%; max-width: 560px; max-height: 96dvh; overflow-y: auto; background: var(--bg); border-radius: 30px 30px 0 0; padding: 10px 20px calc(var(--sab) + 20px); display: flex; flex-direction: column; gap: 14px; }
+.meter .grab { align-self: center; width: 40px; height: 5px; border-radius: 3px; background: #CFC6BB; }
+.mtop { display: flex; align-items: center; justify-content: space-between; } .mtop h2 { font-size: 22px; font-weight: 800; } .mtop .ibtn { box-shadow: none; background: #EAE4DD; font-size: 22px; }
+.gauge { position: relative; height: 196px; display: flex; justify-content: center; } .gauge svg { width: 300px; height: 170px; }
+.gval { position: absolute; top: 78px; left: 0; right: 0; text-align: center; }
+.gval b { font-size: 56px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; } .gval span { font-size: 22px; font-weight: 700; margin-left: 4px; }
+.gval small { display: block; font-size: 14px; color: var(--ink2); font-weight: 600; margin-top: 6px; }
+.g0, .g1 { position: absolute; bottom: 6px; font-size: 11px; color: var(--muted); font-weight: 600; } .g0 { left: 14px; } .g1 { right: 14px; }
+.mstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; text-align: center; }
+.mstats div { background: var(--card); border-radius: 16px; padding: 10px 6px; } .mstats small { display: block; font-size: 11px; color: var(--muted); font-weight: 600; } .mstats b { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mloc { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: 16px; padding: 10px 14px; }
+.mloc .pin { flex: none; width: 34px; height: 34px; border-radius: 17px; background: #F3E6E4; display: flex; align-items: center; justify-content: center; }
+.mloc div { flex: 1; min-width: 0; } .mloc b { display: block; font-size: 14px; } .mloc small { display: block; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mbtns { display: flex; gap: 10px; } .mbtns .btn { height: 54px; border-radius: 27px; } .mbtns .btn.pri { flex: 2; }
+.lnk { border: 0; background: none; padding: 0; color: var(--brand); font: inherit; font-weight: 700; }
+.cal { display: flex; align-items: center; gap: 6px; } .cal b { min-width: 54px; text-align: center; font-variant-numeric: tabular-nums; } .cal .sm { width: 36px; padding: 0; font-size: 18px; }
+.sw { flex: none; width: 46px; height: 28px; border-radius: 14px; background: #D9D1C7; position: relative; } .sw i { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 11px; background: #fff; transition: left .15s; }
+.sw.on { background: var(--brand); } .sw.on i { left: 21px; }

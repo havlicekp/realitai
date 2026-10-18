@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.3.1';
+const APP_V = '1.4.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -414,6 +414,9 @@ async function viewNastaveni() {
     <div class="grp-h">Odesílání do počítače</div>
     <div class="rows"><div class="r"><span class="k">Poznámky, měření, prohlídky<small>Odcházejí hned, i přes mobilní data (jednotky kB). Bez signálu počkají v telefonu.</small></span></div>
       <div class="r" data-outbox>${outboxRow()}</div></div>
+    <div class="grp-h">Měření hluku</div>
+    <div class="rows"><div class="r"><span class="k">Korekce mikrofonu<small>Jednou porovnejte s měřicí aplikací (NIOSH SLM, Decibel X) a nastavte rozdíl.</small></span><span class="cal"><button class="sm" data-a="cal" data-d="-1" aria-label="Snížit korekci">−</button><b>${fmtCal()}</b><button class="sm" data-a="cal" data-d="1" aria-label="Zvýšit korekci">+</button></span></div>
+      <button type="button" class="r rad" role="switch" aria-checked="${measGps()}" data-a="gps-tog"><span class="k">Ukládat polohu měření<small>Poloha GPS a přesnost – měření pak uvidíte na mapě.</small></span><span class="sw${measGps() ? ' on' : ''}"><i></i></span></button></div>
     <div class="grp-h">Fotky z prohlídky</div>
     <div class="rows" role="radiogroup" aria-label="Kdy odesílat fotky">${FOTO_POL().map(([k, l, sub]) => `<button type="button" class="r rad" role="radio" aria-checked="${fotoPolicy() === k}" data-a="foto-pol" data-k="${k}"><span class="k">${l}<small>${sub}</small></span><span class="dot${fotoPolicy() === k ? ' on' : ''}"></span></button>`).join('')}</div>
     ${standalone ? '' : `<div class="grp-h">Na plochu</div><div class="rows"><div class="r"><span class="k">${ios ? 'V Safari klepněte na Sdílet → Přidat na plochu' : installEvt ? 'Nainstalovat aplikaci' : 'V Chrome otevřete ⋮ → Instalovat aplikaci'}<small>Aplikace se pak otevírá jako samostatná a funguje i offline.</small></span>${installEvt ? '<button class="sm" data-a="install">Instalovat</button>' : ''}</div></div>`}
@@ -421,7 +424,7 @@ async function viewNastaveni() {
     <input class="field" data-a="client" value="${esc(clientId())}" placeholder="ID klienta Google" spellcheck="false" autocomplete="off">
     <p class="hint">Stejné ID jako v rozšíření (Nastavení → Telefon). Není to heslo – je veřejné.</p>
     <div style="margin-top:22px"><button class="btn danger" style="width:100%" data-a="wipe">Odpojit Google účet a smazat data z telefonu</button></div>
-    <p class="hint">Verze ${APP_V} · etapa 3 (režim prohlídky). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
+    <p class="hint">Verze ${APP_V} · etapa 4 (měření hluku). Data zůstávají jen v telefonu a ve vaší skryté složce Google Drive.</p>
   </div>${nav('nastaveni')}`;
 }
 function viewIntro() {
@@ -713,7 +716,7 @@ async function viewVisit(id, tab) {
   } else {
     const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
     body = `<div class="box"><h3>Naměřeno${L.hlukNoc ? ` <small>hluková mapa v noci ${L.hlukNoc} dB</small>` : ''}</h3>${m.length ? `<div class="items">${m.map(x => `<div class="it row"><span><b class="db" style="background:${dbCol(x.db)}">${esc(x.db)}</b>${esc(x.misto || 'místo neuvedeno')}<small class="muted"> · ${fmtT(x.t)}${x.t ? ` · ${isNightT(x.t) ? 'noc' : 'den'}` : ''}${x.acc ? ` · 📍 ±${Math.round(x.acc)} m` : ''}</small></span><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
-    bar = `<div class="vbar"><button class="btn pri wide" data-a="meas-add">${I.mic}Změřit hluk</button></div>`;
+    bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
   return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><small>${visitWhen(d)}</small><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
     <div class="vbody">${body}</div>
@@ -784,6 +787,109 @@ async function flushPhotos(manual) {
 addEventListener('online', () => setTimeout(() => flushPhotos(), 800));
 if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener('change', () => flushPhotos());
 
+// ---------- noise meter (stage 4): microphone, A-weighting, 15 s average, GPS ----------
+// Level = A-weighted energy of the analyser spectrum (dBFS) + BASE + user correction. The phone microphone is not
+// calibrated: BASE puts a quiet room around 30–35 dB and the user aligns it once with a reference app (Settings).
+const MIC_BASE = 100;
+const micCal = () => +(LS.get('micCal') || 0);
+const fmtCal = () => (micCal() > 0 ? '+' : '') + micCal() + ' dB';
+const measGps = () => LS.get('measGps') !== false;
+const NS_REF = [[20, 'šepot'], [30, 'tichá ložnice'], [40, 'tichý byt'], [50, 'klidná ulice'], [60, 'hovor'], [70, 'rušná ulice'], [80, 'hustý provoz'], [90, 'kamion zblízka'], [100, 'letadlo nízko']];
+const nsLabel = db => { let l = NS_REF[0][1]; for (const [v, t] of NS_REF) if (db >= v - 5) l = t; return 'jako ' + l; };
+const aWeight = f => { const f2 = f * f, ra = (12194 ** 2 * f2 * f2) / ((f2 + 20.6 ** 2) * Math.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2)); return 20 * Math.log10(ra) + 2.0; };
+const distM = (a, b, c, d) => { const k = 111320, x = (d - b) * k * Math.cos(a * Math.PI / 180), y = (c - a) * k; return Math.round(Math.hypot(x, y)); };
+const M = {};
+async function openMeter() {
+  // audio context right in the tap handler (before any await) – iOS only allows audio started by a user gesture
+  let ctx = null;
+  try { ctx = new (window.AudioContext || window.webkitAudioContext)(); ctx.resume().catch(() => {}); } catch (_) {}
+  const id = route().id, d = await getDoc(id);
+  const el = document.createElement('div');
+  el.className = 'meter-bg';
+  el.innerHTML = `<div class="meter" role="dialog" aria-modal="true" aria-label="Měření hluku"><i class="grab"></i>
+    <div class="mtop"><h2>Měření hluku</h2><button class="ibtn" data-mx aria-label="Zavřít">×</button></div>
+    <div class="gauge"><svg viewBox="0 0 300 170" role="img" aria-label="Ukazatel hladiny hluku"><path d="M 30 150 A 120 120 0 0 1 270 150" fill="none" stroke="#E4DED7" stroke-width="18" stroke-linecap="round"/><path data-arc fill="none" stroke-width="18" stroke-linecap="round"/><circle data-knob r="11" fill="#fff" stroke="#1D1B19" stroke-width="4"/></svg>
+      <div class="gval"><b data-cur>–</b><span>dB</span><small data-lab>Spouštím mikrofon…</small></div><span class="g0">20</span><span class="g1">100</span></div>
+    <div class="mstats"><div><small>Průměr 15 s</small><b data-avg>–</b></div><div><small>Minimum</small><b data-min>–</b></div><div><small>Špička</small><b data-max>–</b></div></div>
+    <div class="mloc" data-loc ${measGps() ? '' : 'hidden'}><span class="pin">📍</span><div><b data-gps>Zjišťuji polohu…</b><small data-gps2></small></div><button class="sm" data-refix>Upřesnit</button></div>
+    <div><div class="lbl">Kde měříte</div><div class="chips2 on1" data-mist>${MISTA.map((m, i) => `<button type="button" class="${i ? '' : 'on'}" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div></div>
+    <p class="hint">Mikrofon telefonu není kalibrovaný: jednou porovnejte s aplikací (NIOSH SLM, Decibel X) a nastavte korekci v Nastavení. Teď <b>${fmtCal()}</b>. <button class="lnk" data-manual>Zadat hodnotu ručně</button></p>
+    <div class="mbtns"><button class="btn" data-mx>Zrušit</button><button class="btn pri" data-save disabled>Uložit</button></div></div>`;
+  document.body.appendChild(el);
+  const $ = q => el.querySelector(q);
+  let misto = MISTA[0], pos = null, stream = null, raf = 0, watch = null;
+  const hist = [], fast = [];
+  const stop = () => { cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close().catch(() => {}); if (watch != null) navigator.geolocation.clearWatch(watch); el.remove(); M.close = null; };
+  M.close = stop;
+  el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-mx]')) stop(); });
+  $('[data-mist]').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; misto = b.dataset.v; $('[data-mist]').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); });
+  $('[data-manual]').addEventListener('click', () => { stop(); ACTIONS['meas-add'](); });
+  // poloha
+  const L = d && d.lokalita;
+  const gps = () => { if (!measGps() || !navigator.geolocation) return; if (watch != null) navigator.geolocation.clearWatch(watch);
+    watch = navigator.geolocation.watchPosition(p => { pos = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) };
+      $('[data-gps]').textContent = `Poloha uložena · ±${pos.acc} m`;
+      $('[data-gps2]').textContent = `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}${L && L.lat ? ` · ${distM(L.lat, L.lon, pos.lat, pos.lon)} m od domu podle inzerátu` : ''}`; },
+    e => { $('[data-gps]').textContent = 'Poloha nedostupná'; $('[data-gps2]').textContent = e.code === 1 ? 'Povolte polohu pro tuto aplikaci v nastavení telefonu.' : 'Zkuste Upřesnit venku nebo u okna.'; },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }); };
+  $('[data-refix]').addEventListener('click', gps);
+  gps();
+  // mikrofon
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) {
+    $('[data-lab]').textContent = e && e.name === 'NotAllowedError' ? 'Přístup k mikrofonu je zakázaný – povolte ho v nastavení telefonu.' : 'Mikrofon se nepodařilo spustit.';
+    return;
+  }
+  if (!el.isConnected) { stream.getTracks().forEach(t => t.stop()); return; }
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+  const an = ctx.createAnalyser(); an.fftSize = 4096; an.smoothingTimeConstant = 0;
+  ctx.createMediaStreamSource(stream).connect(an);
+  const bins = new Float32Array(an.frequencyBinCount), hz = ctx.sampleRate / an.fftSize, wA = Array.from(bins, (_, i) => i ? aWeight(i * hz) : -200);
+  const arc = $('[data-arc]'), knob = $('[data-knob]');
+  const pt = db => { const a = Math.PI * (1 - (Math.max(20, Math.min(100, db)) - 20) / 80); return [150 + 120 * Math.cos(a), 150 - 120 * Math.sin(a)]; };
+  const col = db => db < 40 ? '#7FB36C' : db < 55 ? '#D9C46A' : db < 70 ? '#E2A46B' : '#D27A70';
+  const t0 = performance.now();
+  let lastUi = 0;
+  const loop = now => {
+    raf = requestAnimationFrame(loop);
+    an.getFloatFrequencyData(bins);
+    let e = 0; for (let i = 1; i < bins.length; i++) { const v = bins[i] + wA[i]; if (v > -160) e += 10 ** (v / 10); }
+    const db = Math.max(15, 10 * Math.log10(e || 1e-12) + MIC_BASE + micCal()); // digital silence is not a real level
+    fast.push(db); if (fast.length > 8) fast.shift();
+    hist.push({ t: now, e: 10 ** (db / 10) });
+    while (hist.length && now - hist[0].t > 15000) hist.shift();
+    if (now - lastUi < 120) return;
+    lastUi = now;
+    const cur = 10 * Math.log10(fast.reduce((a, b) => a + 10 ** (b / 10), 0) / fast.length);
+    const avg = 10 * Math.log10(hist.reduce((a, b) => a + b.e, 0) / hist.length);
+    if (now - t0 > 1500) { M.min = Math.min(M.min ?? cur, cur); M.max = Math.max(M.max ?? cur, cur); }
+    M.avg = avg;
+    const [x, y] = pt(cur);
+    arc.setAttribute('d', `M 30 150 A 120 120 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)}`); arc.setAttribute('stroke', col(cur));
+    knob.setAttribute('cx', x.toFixed(1)); knob.setAttribute('cy', y.toFixed(1));
+    $('[data-cur]').textContent = Math.round(cur); $('[data-lab]').textContent = nsLabel(cur);
+    $('[data-avg]').textContent = Math.round(avg); $('[data-min]').textContent = M.min != null ? Math.round(M.min) : '–'; $('[data-max]').textContent = M.max != null ? Math.round(M.max) : '–';
+    const sv = $('[data-save]'); sv.disabled = now - t0 < 3000; sv.textContent = `Uložit ${Math.round(avg)} dB`;
+  };
+  M.min = M.max = null;
+  raf = requestAnimationFrame(loop);
+  $('[data-save]').addEventListener('click', async () => {
+    const dur = Math.round(Math.min(15000, performance.now() - t0) / 1000);
+    const item = { db: Math.round(M.avg * 10) / 10, misto, t: new Date().toISOString(), zdroj: 'mikrofon', dur, korekce: micCal() };
+    if (pos) Object.assign(item, pos);
+    stop();
+    await queueOp({ nid: id, op: 'mereni.add', item });
+    render();
+  });
+}
+Object.assign(ACTIONS, {
+  meter: () => openMeter(),
+  cal: a => { LS.set('micCal', Math.max(-30, Math.min(30, micCal() + +a.dataset.d))); render(); },
+  'gps-tog': () => { LS.set('measGps', !measGps()); render(); }
+});
+
 // ---------- routing and rendering ----------
 const scrollPos = new Map();
 let curKey = '', renderSeq = 0;
@@ -793,6 +899,7 @@ function route() {
   return { v: ['mapa', 'prohlidky', 'nastaveni'].includes(p[0]) ? p[0] : 'list' };
 }
 async function render() {
+  if (M.close) M.close(); // leaving the screen (back gesture) stops the microphone
   if (S.notesFlush) { S.notesFlush(); S.notesFlush = null; } // save unsaved notes before the field disappears
   if (route().v === 'notes') { history.replaceState(null, '', `#/n/${route().id}?t=poznamky`); } // legacy link to the standalone editor
   const seq = ++renderSeq, r = route(), key = r.v + (r.id || '');
