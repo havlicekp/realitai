@@ -306,3 +306,6 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .shb > .btn[type=submit] { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -10px 0 var(--bg), 0 10px 0 var(--bg); }
 .sh { padding-bottom: calc(var(--sab) + 12px); }
 .phbig { max-height: 34dvh; object-fit: contain; background: var(--soft); }
+.nbox .ntb { background: var(--bg); }
+.nbox .ned { margin-top: 0; }
+@media (min-width: 600px) { .vbody, .vbar { max-width: 560px; margin-left: auto; margin-right: auto; } .vtop { max-width: 600px; margin: 0 auto; } .vtabs { max-width: 560px; margin: 0 auto; } .vbar { box-sizing: border-box; } }

@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.5';
+const APP_V = '1.6.7';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -355,7 +355,7 @@ function safeHtml(html) {
 }
 const fmtT = t => t ? new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 // notes are edited in place (toolbar above, automatic lists and links as in the extension); used in the detail and in the visit mode
-const notesBox = (P, tall) => `<div class="box nbox"><h3>Poznámky</h3>
+const notesBox = (P, tall) => `<div class="nbox">
     <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<span class="sep"></span>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}">${t[1]}</button>`).join('')}</div>
     <div class="ned notes${tall ? ' tall' : ''}" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky" data-ph="Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`;
 function tabPoznamky(d) {
@@ -813,7 +813,6 @@ async function viewVisit(id, tab) {
     const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
     // same row format as noise: photo, part of the flat, time, small x to delete
     body = ph.length ? `<div class="box"><div class="mlist">${ph.map(p => `<div class="mrow"><button class="phs" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}" aria-label="Upravit fotku"></button><button class="mtx" data-a="ph-open" data-fid="${p.fid}"><b class="${p.popis ? '' : 'ph0'}">${esc(p.popis || 'Kde? Klepněte a vyberte')}</b><small>${fmtT(p.at)}</small></button><button class="x" data-a="ph-del" data-fid="${p.fid}" aria-label="Smazat fotku">×</button></div>`).join('')}</div></div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
-    body += `<p class="hint">Fotky se uloží do Příloh nabídky v počítači${fotoPolicy() === 'hned' ? '' : fotoPolicy() === 'wifi' ? ' a odešlou se přes Wi‑Fi' : ' po „Odeslat teď“ v Nastavení'}.</p>`;
     bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
   } else {
     const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
