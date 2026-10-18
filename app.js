@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.3.0';
+const APP_V = '1.3.1';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -279,8 +279,8 @@ function listBody() {
   if (f[0] === 'prohlidka') list.sort((a, b) => ((planned(a) || {}).datum || '9').localeCompare((planned(b) || {}).datum || '9'));
   const next = items.map(it => ({ it, p: planned(it) })).filter(x => x.p).sort((a, b) => a.p.datum.localeCompare(b.p.datum))[0];
   const nd = next && new Date(next.p.datum);
-  return `${next && !q.length ? `<div class="next"><div class="d"><span>${DNY[nd.getDay()]}</span><b>${nd.getDate()}</b><span>${nd.getMonth() + 1}.</span></div>
-      <a class="x" href="#/n/${next.it.id}"><small>Nejbližší prohlídka</small><b>${esc(placeOf(next.it) || titleOf(next.it))}</b><span>${esc(titleOf(next.it))}${next.it.overit ? ` · ${next.it.overit} bodů k ověření` : ''}</span></a><a class="npill" href="#/n/${next.it.id}/prohlidka">Prohlídka</a></div>` : ''}
+  return `${next && !q.length ? `<div class="next"><div class="d"><span>${DNY[nd.getDay()]}</span><b>${nd.getDate()}</b><span>${next.p.cas ? esc(next.p.cas) : (nd.getMonth() + 1) + '.'}</span></div>
+      <a class="nx" href="#/n/${next.it.id}"><small>Nejbližší prohlídka</small><b>${esc(placeOf(next.it) || titleOf(next.it))}</b><span>${esc(titleOf(next.it))}${next.it.overit ? ` · ${next.it.overit} bodů k ověření` : ''}</span></a><a class="npill" href="#/n/${next.it.id}/prohlidka">Prohlídka</a></div>` : ''}
     <div class="sec"><h2>${esc(f[1])}</h2><span>${list.length} ${list.length === 1 ? 'nabídka' : list.length < 5 && list.length ? 'nabídky' : 'nabídek'}</span></div>
     <div class="list">${list.slice(0, ui.shown).map(card).join('') || `<div class="empty">${items.length ? 'Nic neodpovídá.' : S.running ? 'Stahuji data…' : 'Zatím žádná data.'}</div>`}</div>
     ${list.length > ui.shown ? `<button class="more" data-a="more">Zobrazit další (${list.length - ui.shown})</button>` : ''}`;
