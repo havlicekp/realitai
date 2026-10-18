@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.9';
+const APP_V = '1.6.10';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -822,11 +822,11 @@ async function viewVisit(id, tab) {
   else if (tab === 'foto') {
     const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
     // same row format as noise: photo, part of the flat, time, small x to delete
-    body = ph.length ? `<div class="box"><div class="mlist">${ph.map(p => `<div class="mrow"><button class="phs" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}" aria-label="Upravit fotku"></button><button class="mtx" data-a="ph-open" data-fid="${p.fid}"><b class="${p.popis ? '' : 'ph0'}">${esc(p.popis || 'Kde? Klepněte a vyberte')}</b><small>${fmtT(p.at)}</small></button><button class="x" data-a="ph-del" data-fid="${p.fid}" aria-label="Smazat fotku">×</button></div>`).join('')}</div></div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
+    body = ph.length ? `<div class="box"><div class="mlist">${ph.map(p => `<div class="mrow"><button class="phs" data-a="ph-open" data-fid="${p.fid}" data-ph="${p.fid}" aria-label="Upravit fotku"></button><button class="mtx" data-a="ph-open" data-fid="${p.fid}">${p.popis ? `<span class="pills">${String(p.popis).split(/,\s*/).filter(Boolean).map(t => `<span class="pill2">${esc(t)}</span>`).join('')}</span>` : '<b class="ph0">Kde? Klepněte a vyberte</b>'}<small>${fmtT(p.at)}</small></button><button class="x" data-a="ph-del" data-fid="${p.fid}" aria-label="Smazat fotku">×</button></div>`).join('')}</div></div>` : '<div class="empty">Zatím žádné fotky. Vyfoťte, co chcete mít v počítači v Přílohách nabídky.</div>';
     bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
   } else {
     const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
-    body = `<div class="box">${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))} dB</span><div><b>${esc(x.misto || 'místo neuvedeno')}</b><small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></div><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
+    body = `<div class="box">${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))} dB</span><div><span class="pills"><span class="pill2">${esc(x.misto || 'místo neuvedeno')}</span></span><small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></div><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
     if (L.hlukNoc) body += `<p class="hint">Hluková mapa Prahy v noci u domu: ${L.hlukNoc} dB.</p>`;
     bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
