@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.6.10';
+const APP_V = '1.6.11';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -595,6 +595,7 @@ function applyLocal(d, o) {
   if (o.op === 'notes.set') d.poznamky = { html: o.html, text: o.text, at: o.at, local: true };
   else if (o.op === 'mereni.add') { d.mereni = (d.mereni || []).slice(); if (!d.mereni.some(x => x.t === o.item.t)) d.mereni.push(Object.assign({ local: true }, o.item)); }
   else if (o.op === 'mereni.del') d.mereni = (d.mereni || []).filter(x => x.t !== o.t);
+  else if (o.op === 'mereni.set') d.mereni = (d.mereni || []).map(x => x.t === o.t ? Object.assign({}, x, o.patch) : x);
   else if (o.op === 'postup.stav') { p.stav = o.stav; p.duvod = o.duvod; p.stavAt = o.at; }
   else if (o.op === 'prohlidka.add') add('prohlidky', o.item);
   else if (o.op === 'prohlidka.del') del('prohlidky', o.match);
@@ -629,14 +630,29 @@ function sheet(title, body, onOk, okLabel = 'Uložit') {
   setTimeout(() => { const f = el.querySelector('input:not([type=hidden]), select'); if (f && f.dataset.focus) f.focus(); }, 50);
   return el;
 }
-const MISTA = ['ložnice, okna zavřená', 'ložnice, okna otevřená', 'obývák', 'balkon', 'venku před domem', 'dvůr'];
+// noise places as separate tags (several can be combined, e.g. "ložnice, okna otevřená"); stored as one comma-separated text
+const MISTA = ['ložnice', 'pokoj', 'obývák', 'kuchyň', 'balkon', 'venku', 'dvůr', 'okna zavřená', 'okna otevřená'];
+const splitTags = t => String(t || '').split(/,\s*/).map(x => x.trim()).filter(Boolean);
+// multi-select chips + own text; returns the html and a reader of the chosen value
+function tagPicker(tags, value, ph) {
+  const parts = splitTags(value), sel = new Set(parts.filter(x => tags.includes(x))), own = parts.filter(x => !tags.includes(x)).join(', ');
+  return { sel, html: `<div class="chips2 multi">${tags.map(m => `<button type="button" data-v="${esc(m)}" aria-pressed="${sel.has(m)}"${sel.has(m) ? ' class="on"' : ''}>${esc(m)}</button>`).join('')}</div><input class="field" name="own" value="${esc(own)}" placeholder="${esc(ph)}">`,
+    value: v => [...tags.filter(m => sel.has(m)), String(v.own || '').trim()].filter(Boolean).join(', ') };
+}
+function wireTags(el, tp) { el.querySelectorAll('.chips2.multi button').forEach(b => b.addEventListener('click', () => { const m = b.dataset.v; if (tp.sel.has(m)) tp.sel.delete(m); else tp.sel.add(m); b.classList.toggle('on', tp.sel.has(m)); b.setAttribute('aria-pressed', tp.sel.has(m)); })); }
 const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 const ACTIONS = {
-  'meas-add': () => { const id = route().id; sheet('Měření hluku', `<label class="lbl">Hodnota (dB)</label><input class="field big" name="db" type="number" inputmode="decimal" min="10" max="130" step="0.1" data-focus="1" placeholder="např. 42">
-      <label class="lbl">Kde</label><div class="chips2" data-name="misto">${MISTA.map(m => `<button type="button" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div>
-      <input class="field" name="misto" placeholder="nebo vlastní popis"><label class="lbl">Kdy</label><input class="field" name="t" type="datetime-local" value="${nowLocal()}">`,
+  'meas-add': () => { const id = route().id, tp = tagPicker(MISTA, '', 'vlastní popis');
+    const el = sheet('Měření hluku', `<label class="lbl">Hodnota (dB)</label><input class="field big" name="db" type="number" inputmode="decimal" min="10" max="130" step="0.1" data-focus="1" placeholder="např. 42">
+      <label class="lbl">Kde</label>${tp.html}<label class="lbl">Kdy</label><input class="field" name="t" type="datetime-local" value="${nowLocal()}">`,
     v => { const db = Number(String(v.db).replace(',', '.')); if (!(db >= 10 && db <= 130)) return 'Zadejte hodnotu v dB (10–130).';
-      return void queueOp({ nid: id, op: 'mereni.add', item: { db: Math.round(db * 10) / 10, misto: v.misto.trim(), t: v.t ? new Date(v.t).toISOString() : new Date().toISOString() } }); }, 'Přidat měření'); },
+      return void queueOp({ nid: id, op: 'mereni.add', item: { db: Math.round(db * 10) / 10, misto: tp.value(v), t: v.t ? new Date(v.t).toISOString() : new Date().toISOString() } }); }, 'Přidat měření');
+    wireTags(el, tp); },
+  // edit only the places of a measurement
+  'meas-edit': async a => { const id = route().id, d = await getDoc(id), m = (d.mereni || []).find(x => x.t === a.dataset.t); if (!m) return;
+    const tp = tagPicker(MISTA, m.misto, 'vlastní popis');
+    const el = sheet(`Kde se měřilo · ${Math.round(m.db)} dB`, tp.html, async v => { const misto = tp.value(v); if (misto !== (m.misto || '')) await queueOp({ nid: id, op: 'mereni.set', t: m.t, patch: { misto } }); }, 'Uložit');
+    wireTags(el, tp); },
   'meas-del': a => { if (confirm('Smazat toto měření?')) queueOp({ nid: route().id, op: 'mereni.del', t: a.dataset.t }).then(render); },
   'pr-del': a => { if (confirm('Smazat tuto prohlídku?')) queueOp({ nid: +a.dataset.nid, op: 'prohlidka.del', match: JSON.parse(a.dataset.m) }).then(render); },
   'plan': () => planSheet(null),
@@ -826,7 +842,7 @@ async function viewVisit(id, tab) {
     bar = `<div class="vbar"><label class="btn pri wide">${I.cam}Vyfotit<input type="file" accept="image/*" capture="environment" data-a="ph-take" hidden></label></div>`;
   } else {
     const L = d.lokalitaData || {}, m = (d.mereni || []).slice().sort((a, b) => String(b.t).localeCompare(String(a.t)));
-    body = `<div class="box">${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))} dB</span><div><span class="pills"><span class="pill2">${esc(x.misto || 'místo neuvedeno')}</span></span><small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></div><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
+    body = `<div class="box">${m.length ? `<div class="mlist">${m.map(x => `<div class="mrow"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))} dB</span><button class="mtx" data-a="meas-edit" data-t="${esc(x.t || '')}" aria-label="Upravit místo měření">${x.misto ? `<span class="pills">${splitTags(x.misto).map(t => `<span class="pill2">${esc(t)}</span>`).join('')}</span>` : '<b class="ph0">Kde? Klepněte a vyberte</b>'}<small>${[x.min != null && x.max != null ? `min ${x.min} · max ${x.max} dB` : '', fmtT(x.t), x.t ? (isNightT(x.t) ? 'noc' : 'den') : '', x.acc ? `📍 ±${Math.round(x.acc)} m` : ''].filter(Boolean).join(' · ')}</small></button><button class="x" data-a="meas-del" data-t="${esc(x.t || '')}" aria-label="Smazat měření">×</button></div>`).join('')}</div>` : '<p class="muted">Zatím bez měření.</p>'}</div>`;
     if (L.hlukNoc) body += `<p class="hint">Hluková mapa Prahy v noci u domu: ${L.hlukNoc} dB.</p>`;
     bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
@@ -943,17 +959,18 @@ async function openMeter() {
       <div class="gval"><b data-cur>–</b><span>dB</span><small data-lab>Spouštím mikrofon…</small></div><span class="g0">20</span><span class="g1">100</span></div>
     <div class="mstats"><div><small>Průměr 15 s</small><b data-avg>–</b></div><div><small>Minimum</small><b data-min>–</b></div><div><small>Špička</small><b data-max>–</b></div></div>
     <div class="mloc" data-loc ${measGps() ? '' : 'hidden'}><span class="pin">📍</span><div><b data-gps>Zjišťuji polohu…</b><small data-gps2></small></div><button class="sm" data-refix>Upřesnit</button></div>
-    <div><div class="lbl">Kde měříte</div><div class="chips2 on1" data-mist>${MISTA.map((m, i) => `<button type="button" class="${i ? '' : 'on'}" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div></div>
+    <div><div class="lbl">Kde měříte</div><div class="chips2" data-mist>${MISTA.map(m => `<button type="button" data-v="${esc(m)}" aria-pressed="false">${esc(m)}</button>`).join('')}</div></div>
     <p class="hint">Mikrofon telefonu není kalibrovaný: jednou porovnejte s aplikací (NIOSH SLM, Decibel X) a nastavte korekci v Nastavení. Teď <b>${fmtCal()}</b>. <button class="lnk" data-manual>Zadat hodnotu ručně</button></p>
     <div class="mbtns"><button class="btn" data-mx>Zrušit</button><button class="btn pri" data-save disabled>Uložit</button></div></div>`;
   document.body.appendChild(el);
   const $ = q => el.querySelector(q);
-  let misto = MISTA[0], pos = null, stream = null, raf = 0, watch = null;
+  const mist = new Set();
+  let pos = null, stream = null, raf = 0, watch = null;
   const hist = [], fast = [];
   const stop = () => { cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close().catch(() => {}); if (watch != null) navigator.geolocation.clearWatch(watch); el.remove(); M.close = null; };
   M.close = stop;
   el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-mx]')) stop(); });
-  $('[data-mist]').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; misto = b.dataset.v; $('[data-mist]').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); });
+  $('[data-mist]').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; const m = b.dataset.v; if (mist.has(m)) mist.delete(m); else mist.add(m); b.classList.toggle('on', mist.has(m)); b.setAttribute('aria-pressed', mist.has(m)); });
   $('[data-manual]').addEventListener('click', () => { stop(); ACTIONS['meas-add'](); });
   // poloha
   const L = d && d.lokalita;
@@ -1008,7 +1025,7 @@ async function openMeter() {
   raf = requestAnimationFrame(loop);
   $('[data-save]').addEventListener('click', async () => {
     const dur = Math.round(Math.min(15000, performance.now() - t0) / 1000);
-    const item = { db: Math.round(M.avg * 10) / 10, min: M.min != null ? Math.round(M.min) : null, max: M.max != null ? Math.round(M.max) : null, misto, t: new Date().toISOString(), zdroj: 'mikrofon', dur, korekce: micCal() };
+    const item = { db: Math.round(M.avg * 10) / 10, min: M.min != null ? Math.round(M.min) : null, max: M.max != null ? Math.round(M.max) : null, misto: MISTA.filter(m => mist.has(m)).join(', '), t: new Date().toISOString(), zdroj: 'mikrofon', dur, korekce: micCal() };
     if (pos) Object.assign(item, pos);
     stop();
     await queueOp({ nid: id, op: 'mereni.add', item });
