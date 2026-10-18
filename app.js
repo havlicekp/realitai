@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.2.0';
+const APP_V = '1.2.1';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -354,7 +354,7 @@ function tabPoznamky(d) {
   const out = [], P = d.poznamky;
   // notes are edited in place (toolbar above, automatic lists and links as in the extension)
   out.push(`<div class="box nbox"><h3>Poznámky</h3>
-    <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<i></i>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}"${t[3] ? ` style="${t[3]}"` : ''}>${t[1]}</button>`).join('')}</div>
+    <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<span class="sep"></span>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}">${t[1]}</button>`).join('')}</div>
     <div class="ned notes" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky" data-ph="Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`);
   if ((d.prilohy || []).length) out.push(`<div class="box"><h3>Přílohy</h3><div class="items">${d.prilohy.map(a => `<div class="it"><b>·</b><span>${esc(a.name)} <span class="muted">${a.size ? Math.round(a.size / 1024).toLocaleString('cs-CZ') + ' kB' : ''}</span></span></div>`).join('')}</div><p class="muted">Soubory příloh jsou zatím jen v rozšíření v počítači.</p></div>`);
   return out.join('');
@@ -552,9 +552,14 @@ function pickList(items, q) {
 }
 
 // ---------- notes editor (same as in the extension) ----------
-const TB = [['bold', 'B', 'Tučně', 'font-weight:800'], ['italic', 'I', 'Kurzíva', 'font-style:italic'], ['underline', 'U', 'Podtržení', 'text-decoration:underline'], ['strikeThrough', 'S', 'Přeškrtnutí', 'text-decoration:line-through'], '|',
-  ['h3', 'H', 'Nadpis', 'font-weight:800'], ['insertUnorderedList', '•', 'Odrážky'], ['insertOrderedList', '1.', 'Číslování'], ['outdent', '⇤', 'Zmenšit odsazení'], ['indent', '⇥', 'Odsadit'], '|',
-  ['link', '🔗', 'Odkaz'], ['removeFormat', 'T̸', 'Zrušit formátování']];
+const ic = d => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const TB = [['bold', '<b>B</b>', 'Tučně'], ['italic', '<i>I</i>', 'Kurzíva'], ['underline', '<u>U</u>', 'Podtržení'], ['strikeThrough', '<s>S</s>', 'Přeškrtnutí'], '|',
+  ['h3', '<b>H</b>', 'Nadpis'], ['insertUnorderedList', ic('<circle cx="5" cy="7" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="17" r="1.6"/><path d="M9 6.2h11v1.6H9zM9 11.2h11v1.6H9zM9 16.2h11v1.6H9z"/>'), 'Odrážky'],
+  ['insertOrderedList', ic('<text x="2.5" y="9" font-size="6.5" font-weight="700">1</text><text x="2.5" y="18.5" font-size="6.5" font-weight="700">2</text><path d="M9 6.2h11v1.6H9zM9 15.7h11v1.6H9z"/>'), 'Číslovaný seznam'],
+  ['outdent', ic('<path d="M3 4.2h18v1.6H3zM11 9.2h10v1.6H11zM11 13.2h10v1.6H11zM3 18.2h18v1.6H3zM7.5 8.5v6L3.5 11.5z"/>'), 'Zmenšit odsazení'],
+  ['indent', ic('<path d="M3 4.2h18v1.6H3zM11 9.2h10v1.6H11zM11 13.2h10v1.6H11zM3 18.2h18v1.6H3zM3.5 8.5v6l4-3z"/>'), 'Zvětšit odsazení'], '|',
+  ['link', ic('<path d="M10.6 13.4a1 1 0 0 1 0-1.4l3.5-3.5a2.5 2.5 0 1 1 3.5 3.5l-1.8 1.8 1.1 1.1 1.8-1.8a4 4 0 0 0-5.7-5.7L9.5 10.9a2.5 2.5 0 0 0 0 3.6z"/><path d="M13.4 10.6a1 1 0 0 1 0 1.4l-3.5 3.5a2.5 2.5 0 1 1-3.5-3.5l1.8-1.8-1.1-1.1-1.8 1.8a4 4 0 0 0 5.7 5.7l3.5-3.5a2.5 2.5 0 0 0 0-3.6z"/>'), 'Odkaz'],
+  ['removeFormat', ic('<path d="M6 5h12v2h-5l-1.3 4.2-1.8-1.8L10.8 7H6zM4.3 3.9 20.1 19.7l-1.2 1.2-6.2-6.2L11 20H9l2-6.4-7.9-7.9z"/>'), 'Zrušit formátování']];
 // text for AI: same Markdown as the extension (lists, ### headings, **bold**, _italic_, text (link), [obrázek N])
 function noteText(ed) {
   let i = 0;
