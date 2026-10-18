@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.8.0';
+const APP_V = '1.9.1';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -357,9 +357,10 @@ function safeHtml(html) {
 }
 const fmtT = t => t ? new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 // notes are edited in place (toolbar above, automatic lists and links as in the extension); used in the detail and in the visit mode
-const notesBox = (P, tall) => `<div class="nbox">
+// field: notes = general notes (detail), zjisteni = findings from the visit (visit mode) – kept separate
+const notesBox = (P, tall, field = 'notes') => `<div class="nbox">
     <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<span class="sep"></span>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}">${t[1]}</button>`).join('')}</div>
-    <div class="ned notes${tall ? ' tall' : ''}" contenteditable="true" data-ned spellcheck="true" aria-label="Poznámky" data-ph="Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`;
+    <div class="ned notes${tall ? ' tall' : ''}" contenteditable="true" data-ned data-field="${field}" spellcheck="true" aria-label="${field === 'zjisteni' ? 'Zjištění z prohlídky' : 'Poznámky'}" data-ph="${field === 'zjisteni' ? 'Co jste zjistil na prohlídce… (– a mezera = odrážky)' : 'Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)'}">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`;
 function tabPoznamky(d) {
   const out = [notesBox(d.poznamky)];
   if ((d.prilohy || []).length) out.push(`<div class="box"><h3>Přílohy</h3><div class="items">${d.prilohy.map(a => `<div class="it"><b>·</b><span>${esc(a.name)} <span class="muted">${a.size ? Math.round(a.size / 1024).toLocaleString('cs-CZ') + ' kB' : ''}</span></span></div>`).join('')}</div><p class="muted">Soubory příloh jsou zatím jen v rozšíření v počítači.</p></div>`);
@@ -549,7 +550,7 @@ const saveOutbox = () => DB.put('meta', 'outbox', { pending: OB.pending, sent: O
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 async function queueOp(o) {
   o = Object.assign({ cid: newId(), at: new Date().toISOString() }, o);
-  if (o.op === 'notes.set') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // keep the latest version only
+  if (o.op === 'notes.set' || o.op === 'zjisteni.set') OB.pending = OB.pending.filter(x => !(x.op === o.op && x.nid === o.nid)); // keep the latest version only
   OB.pending.push(o);
   await saveOutbox();
   flushSoon();
@@ -593,6 +594,7 @@ const sameItem = (x, m) => m && ((m.id && x.id === m.id) || (!m.id && x.datum ==
 function applyLocal(d, o) {
   const v = d.prohlidky = visitsOf(d).slice(); delete d.postup;
   if (o.op === 'notes.set') d.poznamky = { html: o.html, text: o.text, at: o.at, local: true };
+  else if (o.op === 'zjisteni.set') d.zjisteni = { html: o.html, text: o.text, at: o.at, local: true };
   else if (o.op === 'mereni.add') { d.mereni = (d.mereni || []).slice(); if (!d.mereni.some(x => x.t === o.item.t)) d.mereni.push(Object.assign({ local: true }, o.item)); }
   else if (o.op === 'mereni.del') d.mereni = (d.mereni || []).filter(x => x.t !== o.t);
   else if (o.op === 'mereni.set') d.mereni = (d.mereni || []).map(x => x.t === o.t ? Object.assign({}, x, o.patch) : x);
@@ -733,11 +735,12 @@ function wireNotes(root, id) {
   if (!ed.innerHTML.trim()) ed.innerHTML = ''; // an empty field shows the placeholder (:empty)
   ed.querySelectorAll('span[data-nimg]').forEach(x => x.setAttribute('contenteditable', 'false'));
   let base = null, dirty = false, t = null;
-  DB.get('docs', id).then(raw => { base = raw && raw.poznamky ? raw.poznamky.at || null : null; });
+  const fld = ed.dataset.field === 'zjisteni' ? 'zjisteni' : 'poznamky', op = fld === 'zjisteni' ? 'zjisteni.set' : 'notes.set';
+  DB.get('docs', id).then(raw => { base = raw && raw[fld] ? raw[fld].at || null : null; });
   const save = async () => {
     clearTimeout(t); if (!dirty) return; dirty = false;
     const html = safeHtml(ed.innerHTML), text = noteText(ed);
-    await queueOp({ nid: id, op: 'notes.set', html, text, base });
+    await queueOp({ nid: id, op, html, text, base });
   };
   ed.addEventListener('input', e => {
     if (e.inputType === 'insertText' && (e.data === ' ' || e.data === '\u00a0')) { autoList() || autoLink(1); }
@@ -805,7 +808,7 @@ const FOTO_POL = () => ios
   ? [['hned', 'Hned', 'I přes mobilní data – po prohlídce jsou fotky hned v počítači.'], ['rucne', 'Jen ručně', 'Počkají na „Odeslat teď“. iPhone webové aplikaci neřekne, zda jde o Wi‑Fi.']]
   : [['hned', 'Hned', 'I přes mobilní data – po prohlídce jsou fotky hned v počítači.'], ['wifi', 'Jen přes Wi‑Fi', 'Na datech počkají a odejdou samy po připojení k Wi‑Fi.']];
 const fotoPolicy = () => { const p = LS.get('fotoPol') || 'hned'; return FOTO_POL().some(x => x[0] === p) ? p : 'hned'; };
-const VTABS = [['body', 'Ověřit', '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'], ['pozn', 'Poznámky', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
+const VTABS = [['body', 'Ověřit', '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>'], ['pozn', 'Zjištění', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
   ['foto', 'Fotky', '<path d="M4 8h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="4"/>'], ['hluk', 'Hluk', '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/>']];
 const V = { list: LS.get('ovList') || 'analyza' };
 const visitOf = d => { const l = visitsOf(d).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || '')))); return l.find(p => p.datum === today()) || l.find(upcoming) || null; };
@@ -828,9 +831,9 @@ async function viewVisit(id, tab) {
       <div class="box"><h3>${esc((lists.find(l => l.id === cur) || {}).nazev || '')} <small>${done} z ${ov.length} hotovo</small></h3>${ov.length ? ov.map(x => {
       const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : '';
       return h + `<div class="q${x.done ? ' done' : ''}"><button class="qc" role="checkbox" aria-checked="${x.done}" aria-label="Hotovo" data-a="q-tog" data-k="${esc(x.key)}">${x.done ? '✓' : ''}</button>
-        <button class="qt" data-a="q-open" data-k="${esc(x.key)}"><div>${esc(x.text)}</div>${x.odpoved ? `<p class="qa">${esc(x.odpoved)}</p>` : ''}<small>${x.src === 'vlastni' ? 'vlastní' : 'z analýzy'} · ${x.odpoved ? 'upravit odpověď' : 'přidat odpověď'}</small></button></div>`; }).join('') : `<p class="muted">${cur === 'analyza' ? 'Analýza nemá body k ověření. Přidejte vlastní dole.' : 'Seznam je prázdný. Přidejte body dole.'}</p>`}</div>`;
+        <button class="qt" data-a="q-open" data-k="${esc(x.key)}"><div>${esc(x.text)}</div>${x.odpoved ? `<p class="qa">${esc(x.odpoved)}</p>` : ''}${x.odpoved ? '' : '<small>přidat odpověď</small>'}</button></div>`; }).join('') : `<p class="muted">${cur === 'analyza' ? 'Analýza nemá body k ověření. Přidejte vlastní dole.' : 'Seznam je prázdný. Přidejte body dole.'}</p>`}</div>`;
     bar = `<form class="vbar" data-a-form="q-add"><input class="qin" name="t" placeholder="+ Přidat bod k ověření" aria-label="Nový bod k ověření" autocomplete="off"><button class="btn pri sm2" type="submit">Přidat</button></form>`;
-  } else if (tab === 'pozn') body = notesBox(d.poznamky, true);
+  } else if (tab === 'pozn') body = notesBox(d.zjisteni, true, 'zjisteni');
   else if (tab === 'foto') {
     const ph = (await DB.all('photos')).filter(p => p.nid === id).sort((a, b) => a.at.localeCompare(b.at));
     // same row format as noise: photo, part of the flat, time, small x to delete
