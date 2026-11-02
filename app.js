@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.11.0';
+const APP_V = '1.11.1';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -1049,13 +1049,32 @@ async function openMeter() {
   });
   // poloha
   const L = d && d.lokalita;
-  const gps = () => { if (!measGps() || !navigator.geolocation) return; if (watch != null) navigator.geolocation.clearWatch(watch);
-    watch = navigator.geolocation.watchPosition(p => { pos = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) };
-      $('[data-gps]').textContent = `Poloha uložena · ±${pos.acc} m`;
-      $('[data-gps2]').textContent = `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}${L && L.lat ? ` · ${distM(L.lat, L.lon, pos.lat, pos.lon)} m od domu podle inzerátu` : ''}`; },
-    e => { $('[data-gps]').textContent = 'Poloha nedostupná'; $('[data-gps2]').textContent = e.code === 1 ? 'Povolte polohu pro tuto aplikaci v nastavení telefonu.' : 'Zkuste Upřesnit venku nebo u okna.'; },
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }); };
-  $('[data-refix]').addEventListener('click', gps);
+  // position: watched while the meter is open; “Upřesnit” asks for a fresh fix (no cached position) and shows the result
+  const fb = $('[data-refix]');
+  let refix = null; // { prev: accuracy before, t: timer } while a fresh fix is requested
+  const show = () => {
+    $('[data-gps]').textContent = refix ? 'Zjišťuji polohu znovu…' : `Poloha uložena · ±${pos.acc} m`;
+    $('[data-gps2]').textContent = `${pos.lat.toFixed(4)}, ${pos.lon.toFixed(4)}${L && L.lat ? ` · ${distM(L.lat, L.lon, pos.lat, pos.lon)} m od domu podle inzerátu` : ''}`;
+  };
+  const done = msg => { if (!refix) return; clearTimeout(refix.t); refix = null; fb.disabled = false; fb.textContent = 'Upřesnit'; if (pos) show(); if (msg) $('[data-gps2]').textContent = msg; };
+  const gps = fresh => { if (!measGps() || !navigator.geolocation) return; if (watch != null) navigator.geolocation.clearWatch(watch);
+    watch = navigator.geolocation.watchPosition(p => {
+      const acc = Math.round(p.coords.accuracy);
+      if (refix && p.timestamp < refix.since) return; // cached fix from before the tap
+      pos = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6), acc };
+      if (refix) { const prev = refix.prev; done(); $('[data-gps]').textContent = prev == null ? `Poloha uložena · ±${acc} m` : acc < prev ? `Poloha upřesněna · ±${acc} m (předtím ±${prev} m)` : `Poloha ověřena · ±${acc} m${acc > prev ? ` (předtím ±${prev} m)` : ''}`; }
+      else show(); },
+    e => { if (refix) return done(e.code === 1 ? 'Povolte polohu pro tuto aplikaci v nastavení telefonu.' : 'Přesnější polohu se nepodařilo zjistit – zkuste to venku nebo u okna.');
+      if (pos) return; $('[data-gps]').textContent = 'Poloha nedostupná'; $('[data-gps2]').textContent = e.code === 1 ? 'Povolte polohu pro tuto aplikaci v nastavení telefonu.' : 'Zkuste Upřesnit venku nebo u okna.'; },
+    { enableHighAccuracy: true, maximumAge: fresh ? 0 : 5000, timeout: 30000 }); };
+  fb.title = 'Zjistit polohu znovu (bez uložené polohy) – přesnější bývá venku nebo u okna';
+  fb.addEventListener('click', () => {
+    if (refix) return;
+    refix = { prev: pos ? pos.acc : null, since: Date.now() - 500, t: setTimeout(() => done('Přesnější polohu se nepodařilo zjistit – zkuste to venku nebo u okna.'), 32000) };
+    fb.disabled = true; fb.textContent = 'Zjišťuji…';
+    $('[data-gps]').textContent = 'Zjišťuji polohu znovu…';
+    gps(true);
+  });
   gps();
   // buttons by state
   const btns = () => {
