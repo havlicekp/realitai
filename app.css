@@ -325,3 +325,18 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .qa { margin: 3px 0 0; font-size: 13px; color: var(--ink2); background: var(--bg); border-radius: 8px; padding: 6px 8px; white-space: pre-wrap; }
 .field.area { height: auto; padding: 10px 14px; resize: vertical; line-height: 1.45; }
 .osec { display: block; width: 100%; border: 0; background: none; text-align: left; font: inherit; font-size: 12px; font-weight: 700; color: var(--muted); padding: 6px 0 0; margin-top: 6px; } /* same as analysis group headings (.grp) */
+
+/* my position on the map */
+.mlocb { position: absolute; right: 16px; bottom: calc(var(--navb) + 84px); z-index: 560; width: 48px; height: 48px; border: 0; border-radius: 24px; background: var(--card); color: var(--ink2); box-shadow: 0 4px 16px rgba(29,27,25,.16); display: flex; align-items: center; justify-content: center; }
+.mlocb.on { color: #2F7FE0; } .mlocb.busy svg { animation: mlocp 1s ease-in-out infinite; }
+@keyframes mlocp { 50% { opacity: .35; } }
+.mapw:has(.mcard:not([hidden])) .mlocb { bottom: calc(var(--navb) + 190px); }
+.medot { display: block; width: 20px; height: 20px; border-radius: 10px; background: #2F7FE0; border: 3px solid #fff; box-sizing: border-box; box-shadow: 0 0 0 1px rgba(47,127,224,.35), 0 2px 6px rgba(0,0,0,.25); }
+
+/* noise meter: manual start / stop, calibration */
+.mstate { font-size: 13px; color: var(--ink2); text-align: center; line-height: 1.45; margin: -4px 8px 2px; min-height: 38px; }
+.rdot { display: inline-block; width: 9px; height: 9px; border-radius: 5px; background: #D9443A; margin-right: 6px; vertical-align: 1px; animation: mlocp 1s ease-in-out infinite; }
+.btn.pri.stop { background: #1D1B19; border-color: #1D1B19; }
+.mcal { display: flex; gap: 10px; align-items: center; background: var(--card); border-radius: 16px; padding: 10px 12px; font-size: 13px; color: var(--ink2); }
+.mcal label { flex: 1; line-height: 1.6; } .mcal input { width: 64px; height: 36px; border: 1.5px solid #DDD6CE; border-radius: 10px; padding: 0 8px; font-family: inherit; font-size: 16px; font-weight: 700; text-align: center; }
+.mcal[hidden] { display: none; }
