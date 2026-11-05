@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.12.0';
+const APP_V = '1.12.1';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -1048,11 +1048,12 @@ if (navigator.connection && navigator.connection.addEventListener) navigator.con
 // level = A-weighted mean square in dBFS + MIC_BASE + user correction. Until 1.11 the level came from the FFT spectrum
 // (AnalyserNode), which read 8 dB lower than the exact time-domain value with base 130 – the base is shifted so a correction
 // calibrated before stays valid.
-const MIC_BASE = 122;
-if (LS.get('micBaseV') !== 2 && LS.get('micBaseV') !== 3) LS.set('micCal', 0);
-LS.set('micBaseV', 3);
+// iPhone: NIOSH SLM on the same iPhone 17 read 3.5 dB lower than 1.12.0 – base lowered there (corrections stay as they were)
+const MIC_BASE = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 118.5 : 122;
+if (![2, 3, 4].includes(LS.get('micBaseV'))) LS.set('micCal', 0);
+LS.set('micBaseV', 4);
 const micCal = () => +(LS.get('micCal') || 0);
-const fmtCal = () => (micCal() > 0 ? '+' : '') + micCal() + ' dB';
+const fmtCal = () => (micCal() > 0 ? '+' : '') + String(micCal()).replace('.', ',') + ' dB';
 const measGps = () => LS.get('measGps') !== false;
 const NS_REF = [[20, 'šepot'], [30, 'tichá ložnice'], [40, 'tichý byt'], [50, 'klidná ulice'], [60, 'hovor'], [70, 'rušná ulice'], [80, 'hustý provoz'], [90, 'kamion zblízka'], [100, 'letadlo nízko']];
 const nsLabel = db => { let l = NS_REF[0][1]; for (const [v, t] of NS_REF) if (db >= v - 5) l = t; return 'jako ' + l; };
@@ -1075,14 +1076,14 @@ async function openMeter(free) { // free: measured from the map, not tied to an 
     <div class="mloc" data-loc ${gpsOn ? '' : 'hidden'}><span class="pin">📍</span><div><b data-gps>Zjišťuji polohu…</b><small data-gps2></small></div><button class="sm" data-refix>Upřesnit</button></div>
     <div><div class="lbl">Kde měříte</div><div class="chips2" data-mist>${MISTA.map(m => `<button type="button" data-v="${esc(m)}" aria-pressed="false">${esc(m)}</button>`).join('')}</div></div>
     <p class="hint">Mikrofon telefonu není kalibrovaný – korekce <b data-calv>${fmtCal()}</b>. <button class="lnk" data-calo>Kalibrovat podle jiné aplikace</button> · <button class="lnk" data-manual>Zadat hodnotu ručně</button></p>
-    <div class="mcal" data-calbox hidden><p>Položte oba telefony vedle sebe ke stálému zvuku (digestoř, ventilátor, puštěná voda – ideálně 50–70 dB; v tichu kalibrace nefunguje, mikrofon má vlastní šum). Po 10 s zadejte průměr LAeq z druhé aplikace.</p><label>NIOSH SLM / Decibel X ukazuje <input type="number" inputmode="decimal" data-calin min="0" max="130" placeholder="40"> dB</label><button class="btn sm2" data-calset>Nastavit</button></div>
+    <div class="mcal" data-calbox hidden><p>U stálého zvuku (digestoř, ventilátor, puštěná voda – ideálně 50–70 dB; v tichu kalibrace nefunguje): změřte tady aspoň 30 s (Začít / Zastavit), hned potom na stejném místě a ve stejné poloze telefonu změřte 30 s v NIOSH SLM a zadejte jeho LAeq. S druhým telefonem stačí položit oba vedle sebe a zadat hodnotu během měření.</p><label>NIOSH SLM / Decibel X ukazuje LAeq <input type="number" inputmode="decimal" data-calin min="0" max="130" placeholder="40"> dB</label><button class="btn sm2" data-calset>Nastavit</button></div>
     <div class="mbtns" data-btns></div></div>`;
   document.body.appendChild(el);
   const $ = q => el.querySelector(q);
   const mist = new Set();
   let pos = null, stream = null, watch = null, wake = null;
   const fast = [], raw = [];
-  const R = { st: 'live', t0: 0, t1: 0, e: 0, dt: 0, nb: 0, lv: [], min: null, max: null }; // live → rec → done
+  const R = { st: 'live', t0: 0, t1: 0, e: 0, re: 0, dt: 0, nb: 0, lv: [], min: null, max: null }; // live → rec → done
   const relWake = () => { if (wake) wake.release().catch(() => {}); wake = null; };
   const stop = () => { if (M.meterNode) { M.meterNode.disconnect(); if (M.meterNode.port) M.meterNode.port.onmessage = null; M.meterNode = null; } relWake(); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close().catch(() => {}); if (watch != null) navigator.geolocation.clearWatch(watch); el.remove(); M.close = null; };
   M.close = stop;
@@ -1092,11 +1093,16 @@ async function openMeter(free) { // free: measured from the map, not tied to an 
   // calibration against a reference app: correction = reference − our level without correction (average of the last 3 s)
   $('[data-calo]').addEventListener('click', () => { const b = $('[data-calbox]'); b.hidden = !b.hidden; if (!b.hidden) $('[data-calin]').focus(); });
   $('[data-calset]').addEventListener('click', () => {
-    const ref = parseFloat(String($('[data-calin]').value).replace(',', '.')), last = raw.slice(-80);
-    if (!(ref > 0) || last.length < 8) return;
-    const lvl = 10 * Math.log10(last.reduce((a, x) => a + 10 ** (x / 10), 0) / last.length); // Leq of the last 10 s – compare with the reference app's LAeq
-    LS.set('micCal', Math.max(-60, Math.min(60, Math.round(ref - lvl)))); $('[data-calv]').textContent = fmtCal(); $('[data-calbox]').hidden = true;
-    $('[data-state]').textContent = `Korekce nastavena na ${fmtCal()} (podle průměru za posledních ${Math.round(last.length / 8)} s). Platí i pro další měření.`;
+    // after a finished measurement: its Leq without correction (one phone – the reference app measures the same sound right
+    // after, while this app is in the background); otherwise the last 10 s of live sound (two phones side by side)
+    const ref = parseFloat(String($('[data-calin]').value).replace(',', '.')), last = raw.slice(-80), fin = R.st === 'done' && R.dt >= 5000;
+    if (!(ref > 0) || (!fin && last.length < 8)) return;
+    const lvl = fin ? 10 * Math.log10(R.re / R.dt) : 10 * Math.log10(last.reduce((a, x) => a + 10 ** (x / 10), 0) / last.length);
+    const old = micCal(), cal = Math.max(-60, Math.min(60, Math.round((ref - lvl) * 2) / 2)), d = cal - old;
+    LS.set('micCal', cal); $('[data-calv]').textContent = fmtCal(); $('[data-calbox]').hidden = true;
+    if (fin) { R.e *= 10 ** (d / 10); R.lv = R.lv.map(x => x + d); if (R.min != null) { R.min += d; R.max += d; } btns(); ui(true); } // the finished result with the new correction
+    R.calMsg = `Korekce nastavena na ${fmtCal()} (${fin ? `podle změřených ${fmtDur(R.dt)}` : `podle průměru za posledních ${Math.round(last.length / 8)} s`}). Platí i pro další měření.`;
+    $('[data-state]').textContent = R.calMsg;
   });
   // poloha
   const L = d && d.lokalita;
@@ -1135,7 +1141,7 @@ async function openMeter(free) { // free: measured from the map, not tied to an 
   };
   $('[data-btns]').addEventListener('click', async e => {
     if (e.target.closest('[data-go]')) {
-      Object.assign(R, { st: 'rec', t0: performance.now(), e: 0, dt: 0, nb: 0, lv: [], min: null, max: null }); btns();
+      Object.assign(R, { calMsg: '', st: 'rec', t0: performance.now(), e: 0, re: 0, dt: 0, nb: 0, lv: [], min: null, max: null }); btns();
       try { wake = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (_) {} // screen off would stop the measurement
     } else if (e.target.closest('[data-end]')) {
       if (R.dt < 1000) return;
@@ -1178,7 +1184,8 @@ async function openMeter(free) { // free: measured from the map, not tied to an 
     $('[data-avg]').textContent = has ? Math.round(10 * Math.log10(R.e / R.dt)) : '–';
     $('[data-min]').textContent = p ? Math.round(p.l90) : '–'; $('[data-max]').textContent = has && R.max != null ? Math.round(R.max) : '–';
     if (R.st === 'rec') $('[data-state]').innerHTML = `<span class="rdot"></span>Měřím ${fmtDur(dur)} – nechte telefon v klidu, ukončete tlačítkem Zastavit. Doporučeno aspoň 30 s.`;
-    else if (R.st === 'done') $('[data-state]').textContent = `Změřeno ${fmtDur(R.dt)}. Uložte průměr, nebo měřte znovu.`;
+    else if (R.st === 'done') $('[data-state]').textContent = R.calMsg || `Změřeno ${fmtDur(R.dt)}. Uložte průměr, nebo měřte znovu.`;
+    else if (R.calMsg) $('[data-state]').textContent = R.calMsg;
   };
   // one 125 ms block of the A-weighted signal (mean square, full scale = 1)
   const block = ms => {
@@ -1188,7 +1195,7 @@ async function openMeter(free) { // free: measured from the map, not tied to an 
     fast.push(db); if (fast.length > 2) fast.shift();
     cur = 10 * Math.log10(fast.reduce((a, b) => a + 10 ** (b / 10), 0) / fast.length);
     if (R.st === 'rec') {
-      R.e += 10 ** (db / 10) * 125; R.dt += 125; R.nb++;
+      R.e += 10 ** (db / 10) * 125; R.re += 10 ** (rawDb / 10) * 125; R.dt += 125; R.nb++;
       if (R.nb > 4) { R.lv.push(db); R.min = Math.min(R.min ?? db, db); R.max = Math.max(R.max ?? db, db); } // min/max/percentiles of 125 ms levels, without the first half second
     }
     if (R.st === 'live' && ++nb > 6) { const g = $('[data-go]'); if (g && g.disabled) g.disabled = false; }
@@ -1216,7 +1223,7 @@ const pctl = lv => { if (!lv.length) return null; const s = lv.slice().sort((a, 
 Object.assign(ACTIONS, {
   meter: () => openMeter(),
   'meter-free': () => openMeter(true),
-  cal: a => { LS.set('micCal', Math.max(-60, Math.min(60, micCal() + +a.dataset.d))); render(); },
+  cal: a => { LS.set('micCal', Math.max(-60, Math.min(60, Math.round(micCal() + +a.dataset.d)))); render(); },
   'gps-tog': () => { LS.set('measGps', !measGps()); render(); }
 });
 
