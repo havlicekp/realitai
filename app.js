@@ -3,7 +3,7 @@
 // IndexedDB and downloads only files whose fingerprint (appProperties.h) changed. Google sign-in = implicit flow with
 // redirect, scope drive.appdata (the app cannot see anything else in Drive). No server.
 'use strict';
-const APP_V = '1.12.1';
+const APP_V = '1.13.0';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const $app = document.getElementById('app');
 
@@ -282,7 +282,7 @@ function listBody() {
   const next = items.map(it => ({ it, p: planned(it) })).filter(x => x.p).sort((a, b) => a.p.datum.localeCompare(b.p.datum))[0];
   const nd = next && new Date(next.p.datum);
   return `${next && !q.length ? `<div class="next"><div class="d"><span>${DNY[nd.getDay()]}</span><b>${nd.getDate()}</b><span>${next.p.cas ? esc(next.p.cas) : (nd.getMonth() + 1) + '.'}</span></div>
-      <a class="nx" href="#/n/${next.it.id}"><small>Nejbližší prohlídka</small><b>${esc(placeOf(next.it) || titleOf(next.it))}</b><span>${esc(titleOf(next.it))}${next.it.overit ? ` · ${next.it.overit} bodů k ověření` : ''}</span></a><a class="npill" href="#/n/${next.it.id}/prohlidka">Prohlídka</a></div>` : ''}
+      <a class="nx" href="#/n/${next.it.id}"><small>Nejbližší prohlídka</small><b>${esc(placeOf(next.it) || titleOf(next.it))}</b><span>${esc(titleOf(next.it))}${next.it.overit ? ` · ${next.it.overit} bodů k ověření` : ''}</span></a><a class="npill" href="#/n/${next.it.id}/prohlidka">Na místě</a></div>` : ''}
     <div class="sec"><h2>${esc(f[1])}</h2><span>${list.length} ${list.length === 1 ? 'nabídka' : list.length < 5 && list.length ? 'nabídky' : 'nabídek'}</span></div>
     <div class="list">${list.slice(0, ui.shown).map(card).join('') || `<div class="empty">${items.length ? 'Nic neodpovídá.' : S.running ? 'Stahuji data…' : 'Zatím žádná data.'}</div>`}</div>
     ${list.length > ui.shown ? `<button class="more" data-a="more">Zobrazit další (${list.length - ui.shown})</button>` : ''}`;
@@ -339,7 +339,7 @@ function tabAnalyza(d) {
   const ov = d.overit ? d.overit.filter(x => (x.list || 'analyza') === 'analyza') : an.overit;
   if (ov.length) {
     let g = null;
-    out.push(`<div class="box"><h3>Ověřit <small>${ov.filter(x => x.done).length} z ${ov.length} hotovo</small></h3><div class="items">${ov.map(x => { const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : ''; return h + `<div class="it"><span class="chk${x.done ? ' done' : ''}"></span><span>${esc(x.text)}</span></div>`; }).join('')}</div><a class="rowlink in" href="#/n/${d.id}/prohlidka">Otevřít v režimu prohlídky</a></div>`);
+    out.push(`<div class="box"><h3>Ověřit <small>${ov.filter(x => x.done).length} z ${ov.length} hotovo</small></h3><div class="items">${ov.map(x => { const h = x.grp && x.grp !== g ? `<div class="grp">${esc(g = x.grp)}</div>` : ''; return h + `<div class="it"><span class="chk${x.done ? ' done' : ''}"></span><span>${esc(x.text)}</span></div>`; }).join('')}</div><a class="rowlink in" href="#/n/${d.id}/prohlidka">Otevřít Na místě</a></div>`);
   }
   if (an.kategorie.length) out.push(`<details class="box"><summary>Hodnocení podle kategorií</summary><div class="bars">${an.kategorie.map(k => `<div class="bar"><span>${esc(k.nazev)}</span><i><b class="${k.v == null ? '' : k.v < 2 ? 'q1' : k.v < 3 ? 'q2' : k.v < 3.5 ? 'q3' : k.v < 4 ? 'q4' : 'q5'}" style="width:${k.v == null ? 0 : k.v / 5 * 100}%"></b></i><b>${sc(k.v)}</b></div>${k.komentar ? `<div class="why">${esc(k.komentar)}</div>` : ''}`).join('')}</div></details>`);
   if (an.dokumenty.length) out.push(`<details class="box"><summary>Dokumenty k vyžádání</summary><div class="items">${an.dokumenty.map(t => `<div class="it"><b>·</b><span>${esc(t)}</span></div>`).join('')}</div></details>`);
@@ -360,7 +360,7 @@ const fmtT = t => t ? new Date(t).toLocaleString('cs-CZ', { day: 'numeric', mont
 // field: notes = general notes (detail), zjisteni = findings from the visit (visit mode) – kept separate
 const notesBox = (P, tall, field = 'notes') => `<div class="nbox">
     <div class="ntb" role="toolbar" aria-label="Formátování">${TB.map(t => t === '|' ? '<span class="sep"></span>' : `<button type="button" data-cmd="${t[0]}" aria-label="${t[2]}" title="${t[2]}">${t[1]}</button>`).join('')}</div>
-    <div class="ned notes${tall ? ' tall' : ''}" contenteditable="true" data-ned data-field="${field}" spellcheck="true" aria-label="${field === 'zjisteni' ? 'Zjištění z prohlídky' : 'Poznámky'}" data-ph="${field === 'zjisteni' ? 'Co jste zjistil na prohlídce… (– a mezera = odrážky)' : 'Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)'}">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`;
+    <div class="ned notes${tall ? ' tall' : ''}" contenteditable="true" data-ned data-field="${field}" spellcheck="true" aria-label="${field === 'zjisteni' ? 'Zjištění na místě' : 'Poznámky'}" data-ph="${field === 'zjisteni' ? 'Co jste zjistil na prohlídce… (– a mezera = odrážky)' : 'Pište poznámky… (– a mezera = odrážky, 1. a mezera = číslování)'}">${P ? (P.html ? safeHtml(P.html) : esc(P.text).replace(/\n/g, '<br>')) : ''}</div></div>`;
 function tabPoznamky(d) {
   const out = [notesBox(d.poznamky)];
   if ((d.prilohy || []).length) out.push(`<div class="box"><h3>Přílohy</h3><div class="items">${d.prilohy.map(a => `<div class="it"><b>·</b><span>${esc(a.name)} <span class="muted">${a.size ? Math.round(a.size / 1024).toLocaleString('cs-CZ') + ' kB' : ''}</span></span></div>`).join('')}</div><p class="muted">Soubory příloh jsou zatím jen v rozšíření v počítači.</p></div>`);
@@ -377,7 +377,7 @@ async function viewDetail(id, tab) {
     <div class="sheet"><div class="head"><div style="min-width:0"><h1>${esc(titleOf(d))}</h1><div class="u">${esc(placeOf(d.lokalita) || d.nazev)}</div><div class="p">${kc(d.cena)}</div></div>${ring}</div>
       <div class="tabs" role="tablist" aria-label="Části detailu">${TABS.map(([k, l]) => `<button role="tab" data-tab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}">${l}</button>`).join('')}</div>
       <div class="panel">${body}</div></div>
-    <div class="bottom">${d.url ? `<a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">Inzerát ${I.ext}</a>` : ''}<button class="btn pri" style="flex:1.6" data-a="visit-go">${I.home}Prohlídka</button></div></div>`;
+    <div class="bottom">${d.url ? `<a class="btn" href="${esc(d.url)}" target="_blank" rel="noopener">Inzerát ${I.ext}</a>` : ''}<a class="btn pri" style="flex:1.6" href="#/n/${d.id}/prohlidka">${I.home}Na místě</a></div></div>`;
 }
 // Section picker: summary + report headings h1–h4 indented by level; shows the current section while scrolling
 function buildToc(root) {
@@ -429,7 +429,7 @@ function viewMapa() {
     <div class="mtop2"><label class="search">${I.search}<input type="search" data-a="mq" placeholder="Hledat nabídku…" aria-label="Hledat nabídku na mapě" enterkeyhint="search"></label>
       <div class="chips mchips">${MAPLAY.map(([k, l]) => `<button class="chip${p[k] ? ' on' : ''}" data-lay="${k}" aria-pressed="${!!p[k]}">${l}</button>`).join('')}</div><div class="mnote" data-mnote hidden></div></div>
     <button class="mlocb${LS.get('mapLoc') ? ' on' : ''}" data-mloc aria-label="Moje poloha" title="Moje poloha"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg></button>
-    <button class="mmeasb" data-a="meter-free" aria-label="Změřit hluk tady">${I.mic}<span>Změřit hluk</span></button>
+    <div class="mmeasw"><button class="mmeasb" data-a="meter-free" aria-label="Změřit hluk tady">${I.mic}<span>Změřit hluk</span></button><button class="mmeasb" data-a="meas-free-manual" aria-label="Zadat měření hluku ručně">${I.pen}<span>Zadat ručně</span></button></div>
     <div class="mcard" data-mcard hidden></div><div class="mmsg" data-mmsg hidden></div></div>`;
 }
 // detail of one noise measurement on the map; measurements of an offer link to its viewing (noise tab)
@@ -441,11 +441,11 @@ function measCardHtml(x, it) {
     ['Pozadí', x.l90 != null ? `L90 ${x.l90} dB · L10 ${x.l10} dB` : ''],
     ['Rozpětí', x.min != null && x.max != null ? `min ${Math.round(x.min)} · max ${Math.round(x.max)} dB` : ''],
     ['Délka', x.dur ? (x.dur < 60 ? `${x.dur} s` : fmtDur(x.dur * 1000) + ' min') : ''],
-    ['Způsob', x.zdroj === 'mikrofon' ? `mikrofon telefonu${x.korekce ? ` · korekce ${(x.korekce > 0 ? '+' : '') + x.korekce} dB` : ''}` : x.zdroj ? '' : (x.dur ? '' : 'zadáno ručně')],
-    ['Poloha', x.acc ? `přesnost ±${Math.round(x.acc)} m` : ''],
+    ['Způsob', x.zdroj === 'mikrofon' ? `mikrofon telefonu${x.korekce ? ` · korekce ${(x.korekce > 0 ? '+' : '') + String(x.korekce).replace('.', ',')} dB` : ''}` : x.dur ? '' : 'zadáno ručně'],
+    ['Poloha', x.acc ? `přesnost ±${Math.round(x.acc)} m` : x.zdroj === 'rucne' ? 'vybráno na mapě' : ''],
     ['Nabídka', it ? esc(placeOf(it) || titleOf(it)) : 'žádná – měřeno z mapy'],
   ].filter(r => r[1]);
-  const acts = it ? `<a class="btn pri" href="#/n/${it.id}/prohlidka?t=hluk">${vis ? `Otevřít prohlídku ${new Date(vis.datum).getDate()}. ${new Date(vis.datum).getMonth() + 1}.` : 'Otevřít prohlídku'} ›</a>`
+  const acts = it ? `<a class="btn pri" href="#/n/${it.id}/prohlidka?t=hluk">${vis ? `Otevřít prohlídku ${new Date(vis.datum).getDate()}. ${new Date(vis.datum).getMonth() + 1}.` : 'Otevřít Na místě'} ›</a>`
     : `<button class="btn" data-a="volne-edit" data-t="${esc(x.t)}">Upravit místo</button><button class="btn danger" data-a="volne-del" data-t="${esc(x.t)}">Smazat</button>`;
   return `<div class="mmc"><div class="mmh"><span class="mdb2" style="background:${dbCol(x.db)}">${esc(Math.round(x.db))} dB</span><div><b>Měření hluku${x.local ? '<small class="muted">čeká na odeslání do počítače</small>' : ''}</b><span>${esc(nsLabel(x.db))}</span></div><button class="ibtn" data-mcx aria-label="Zavřít">×</button></div>
     <dl class="mmd">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl><div class="mma">${acts}</div></div>`;
@@ -542,6 +542,7 @@ async function wireMapa(root) {
       if (!me) { meAcc = L.circle(ll, { radius: a, color: '#2F7FE0', weight: 1, fillColor: '#2F7FE0', fillOpacity: 0.12, interactive: false }).addTo(map);
         me = L.marker(ll, { icon: L.divIcon({ className: '', html: '<span class="medot"></span>', iconSize: [20, 20], iconAnchor: [10, 10] }), interactive: false, zIndexOffset: 1000 }).addTo(map); }
       else { me.setLatLng(ll); meAcc.setLatLng(ll).setRadius(a); }
+      M.myPos = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6), acc: a, at: Date.now() };
       locB.classList.remove('busy'); locB.classList.add('on'); locB.title = `Moje poloha · přesnost ±${a} m`; mmsg.hidden = true; LS.set('mapLoc', true);
       if (center) { map.setView(ll, Math.max(map.getZoom(), 16)); center = false; }
     }, e => {
@@ -575,7 +576,7 @@ async function viewNastaveni() {
     <div class="grp-h">Měření hluku</div>
     <div class="rows"><div class="r"><span class="k">Korekce mikrofonu<small>Nejsnáz v měřiči: „Kalibrovat podle jiné aplikace“ a zadat, co ukazuje NIOSH SLM nebo Decibel X. Tady jde doladit po 1 dB.</small></span><span class="cal"><button class="sm" data-a="cal" data-d="-1" aria-label="Snížit korekci">−</button><b>${fmtCal()}</b><button class="sm" data-a="cal" data-d="1" aria-label="Zvýšit korekci">+</button></span></div>
       <button type="button" class="r rad" role="switch" aria-checked="${measGps()}" data-a="gps-tog"><span class="k">Ukládat polohu měření<small>Poloha GPS a přesnost – měření pak uvidíte na mapě.</small></span><span class="sw${measGps() ? ' on' : ''}"><i></i></span></button></div>
-    <div class="grp-h">Fotky z prohlídky</div>
+    <div class="grp-h">Fotky z místa</div>
     <div class="rows" role="radiogroup" aria-label="Kdy odesílat fotky">${FOTO_POL().map(([k, l, sub]) => `<button type="button" class="r rad" role="radio" aria-checked="${fotoPolicy() === k}" data-a="foto-pol" data-k="${k}"><span class="k">${l}<small>${sub}</small></span><span class="dot${fotoPolicy() === k ? ' on' : ''}"></span></button>`).join('')}</div>
     ${standalone ? '' : `<div class="grp-h">Na plochu</div><div class="rows"><div class="r"><span class="k">${ios ? 'V Safari klepněte na Sdílet → Přidat na plochu' : installEvt ? 'Nainstalovat aplikaci' : 'V Chrome otevřete ⋮ → Instalovat aplikaci'}<small>Aplikace se pak otevírá jako samostatná a funguje i offline.</small></span>${installEvt ? '<button class="sm" data-a="install">Instalovat</button>' : ''}</div></div>`}
     <div class="grp-h">Přihlašovací klient</div>
@@ -720,6 +721,24 @@ const ACTIONS = {
     const tp = tagPicker(MISTA, m.misto, 'vlastní popis');
     const el = sheet(`Kde se měřilo · ${Math.round(m.db)} dB`, tp.html, async v => { const misto = tp.value(v); if (misto !== (m.misto || '')) await queueOp({ nid: id, op: 'mereni.set', t: m.t, patch: { misto } }); }, 'Uložit');
     wireTags(el, tp); },
+  // manual noise value on the map (not tied to an offer): position = my position, or the centre of the map
+  'meas-free-manual': (a, pos) => {
+    const tp = tagPicker(MISTA, '', 'vlastní popis'), c = M.map && M.map.getCenter();
+    let me = pos || (M.myPos && Date.now() - M.myPos.at < 120000 ? M.myPos : null);
+    const meTxt = () => me ? `Moje poloha · ±${Math.round(me.acc)} m` : 'Moje poloha · zjišťuji…';
+    const el = sheet('Měření hluku na mapě', `<label class="lbl">Hodnota (dB)</label><input class="field big" name="db" type="number" inputmode="decimal" min="10" max="130" step="0.1" data-focus="1" placeholder="např. 42">
+      <label class="lbl">Kde</label>${tp.html}<label class="lbl">Kdy</label><input class="field" name="t" type="datetime-local" value="${nowLocal()}">
+      <label class="lbl">Poloha</label><div class="rows" role="radiogroup" aria-label="Poloha měření">
+        <label class="r rad"><span class="k" data-mepos>${meTxt()}</span><input type="radio" name="kde" value="me" ${me || !c ? 'checked' : ''}></label>
+        ${c ? `<label class="r rad"><span class="k">Bod uprostřed mapy<small>${c.lat.toFixed(4)}, ${c.lng.toFixed(4)} – pro jiné místo zavřete formulář, posuňte mapu a otevřete ho znovu</small></span><input type="radio" name="kde" value="map" ${me ? '' : 'checked'}></label>` : ''}</div>`,
+    v => { const db = Number(String(v.db).replace(',', '.')); if (!(db >= 10 && db <= 130)) return 'Zadejte hodnotu v dB (10–130).';
+      const p = v.kde === 'map' && c ? { lat: +c.lat.toFixed(6), lon: +c.lng.toFixed(6) } : me && { lat: me.lat, lon: me.lon, acc: me.acc };
+      if (!p) return 'Poloha zatím není známá – počkejte chvíli, nebo zvolte Střed mapy.';
+      return void queueOp({ op: 'volne.add', item: Object.assign({ db: Math.round(db * 10) / 10, misto: tp.value(v), t: v.t ? new Date(v.t).toISOString() : new Date().toISOString(), zdroj: 'rucne' }, p) }); }, 'Přidat měření');
+    wireTags(el, tp);
+    if (!me && navigator.geolocation) navigator.geolocation.getCurrentPosition(g => { me = { lat: +g.coords.latitude.toFixed(6), lon: +g.coords.longitude.toFixed(6), acc: Math.round(g.coords.accuracy) }; const t = el.querySelector('[data-mepos]'); if (t) t.textContent = meTxt(); },
+      () => { const t = el.querySelector('[data-mepos]'); if (t) t.textContent = 'Moje poloha · nedostupná'; }, { enableHighAccuracy: true, maximumAge: 30000, timeout: 20000 });
+  },
   'volne-edit': a => { const m = volneItems().find(x => x.t === a.dataset.t); if (!m) return;
     const tp = tagPicker(MISTA, m.misto, 'vlastní popis');
     const el = sheet(`Kde se měřilo · ${Math.round(m.db)} dB`, tp.html, async v => { const misto = tp.value(v); if (misto !== (m.misto || '')) await queueOp({ op: 'volne.set', t: m.t, patch: { misto } }); }, 'Uložit');
@@ -737,9 +756,6 @@ const ACTIONS = {
     sheet('Změnit prohlídku', `<label class="lbl">Datum</label><input class="field" name="datum" type="date" value="${esc(t.datum)}"><label class="lbl">Čas (nepovinné)</label><input class="field" name="cas" type="time" value="${esc(t.cas || '')}">`,
       async v => { if (!v.datum) return 'Zadejte datum.'; if (v.datum === t.datum && (v.cas || '') === (t.cas || '')) return; await queueOp({ nid: id, op: 'prohlidka.set', match: m, patch: { datum: v.datum, cas: v.cas || '' } }); }, 'Uložit');
   },
-  // detail → Visit: with no visit planned (today or later) first ask for the date, then open the visit mode
-  'visit-go': async () => { const id = route().id, d = await getDoc(id), go = () => { location.hash = `#/n/${id}/prohlidka`; };
-    if (visitsOf(d).some(p => p.datum && p.datum >= today())) go(); else planSheet(id, go); },
 };
 // Visit: for a given offer (id) or with an offer picker (Visits → Schedule)
 function planSheet(id, after) {
@@ -887,7 +903,7 @@ const V = { list: LS.get('ovList') || 'analyza' };
 const visitOf = d => { const l = visitsOf(d).filter(p => p.datum).sort((a, b) => String(a.datum + (a.cas || '')).localeCompare(String(b.datum + (b.cas || '')))); return l.find(p => p.datum === today()) || l.find(upcoming) || null; };
 function visitWhen(d) {
   const t = visitOf(d);
-  if (!t) return 'PROHLÍDKA · NAPLÁNOVAT';
+  if (!t) return 'NA MÍSTĚ · NAPLÁNOVAT PROHLÍDKU';
   const dd = new Date(t.datum);
   return `PROHLÍDKA · ${t.datum === today() ? 'DNES' : `${DNY[dd.getDay()]} ${dd.getDate()}. ${dd.getMonth() + 1}.`}${t.cas ? ' ' + esc(t.cas) : ''}`;
 }
@@ -919,9 +935,9 @@ async function viewVisit(id, tab) {
     if (L.hlukNoc) body += `<p class="hint">Hluková mapa Prahy v noci u domu: ${L.hlukNoc} dB.</p>`;
     bar = `<div class="vbar"><button class="btn pri wide" data-a="meter">${I.mic}Změřit hluk</button></div>`;
   }
-  return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><button class="vwhen" data-a="visit-edit" aria-label="Změnit datum a čas prohlídky">${visitWhen(d)} ${I.pen}</button><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
+  return `<div class="vis"><div class="vtop"><button class="ibtn" data-a="back" aria-label="Zpět na detail">${I.back}</button><div><button class="vwhen" data-a="visit-edit" aria-label="${visitOf(d) ? 'Změnit datum a čas prohlídky' : 'Naplánovat prohlídku'}">${visitWhen(d)} ${I.pen}</button><b>${esc(placeOf(d.lokalita) || titleOf(d))}</b></div></div>
     <div class="vbody">${body}</div>
-    <div class="vfoot">${bar}<div class="vtabs" role="tablist" aria-label="Části prohlídky">${VTABS.map(([k, l, ic]) => `<button role="tab" data-vtab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg><span>${l}</span></button>`).join('')}</div></div></div>`;
+    <div class="vfoot">${bar}<div class="vtabs" role="tablist" aria-label="Části Na místě">${VTABS.map(([k, l, ic]) => `<button role="tab" data-vtab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg><span>${l}</span></button>`).join('')}</div></div></div>`;
 }
 const isNightT = t => { const h = new Date(t).getHours(); return h >= 22 || h < 6; };
 function wireVisit(root, id) {
@@ -1089,7 +1105,7 @@ async function openMeter(free) { // free: measured from the map, not tied to an 
   M.close = stop;
   el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-mx]')) stop(); });
   $('[data-mist]').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; const m = b.dataset.v; if (mist.has(m)) mist.delete(m); else mist.add(m); b.classList.toggle('on', mist.has(m)); b.setAttribute('aria-pressed', mist.has(m)); });
-  $('[data-manual]').addEventListener('click', () => { const p = pos; stop(); ACTIONS['meas-add'](null, free ? p || {} : null); });
+  $('[data-manual]').addEventListener('click', () => { const p = pos; stop(); if (free) ACTIONS['meas-free-manual'](null, p); else ACTIONS['meas-add'](); });
   // calibration against a reference app: correction = reference − our level without correction (average of the last 3 s)
   $('[data-calo]').addEventListener('click', () => { const b = $('[data-calbox]'); b.hidden = !b.hidden; if (!b.hidden) $('[data-calin]').focus(); });
   $('[data-calset]').addEventListener('click', () => {

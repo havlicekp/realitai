@@ -342,8 +342,11 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .mcal[hidden] { display: none; }
 /* map: noise measurement from the map, measurement detail card */
 .mtop h2 small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 2px; }
-.mmeasb { position: absolute; left: 16px; bottom: calc(var(--navb) + 84px); z-index: 560; height: 48px; padding: 0 16px 0 14px; border: 0; border-radius: 24px; background: var(--card); color: var(--ink); box-shadow: 0 4px 16px rgba(29,27,25,.16); display: flex; align-items: center; gap: 8px; font: 700 14px Manrope, system-ui, sans-serif; }
-.mapw:has(.mcard:not([hidden])) .mmeasb { display: none; }
+.mmeasw { position: absolute; left: 16px; bottom: calc(var(--navb) + 84px); z-index: 560; display: flex; gap: 8px; }
+.mmeasb { height: 48px; padding: 0 16px 0 14px; border: 0; border-radius: 24px; background: var(--card); color: var(--ink); box-shadow: 0 4px 16px rgba(29,27,25,.16); display: flex; align-items: center; gap: 8px; font: 700 14px Manrope, system-ui, sans-serif; }
+.mapw:has(.mcard:not([hidden])) .mmeasw { display: none; }
+.mmeasb svg { width: 18px; height: 18px; flex: none; }
+.rows label.rad { display: flex; align-items: center; gap: 12px; padding: 12px 14px; } .rows label.rad input { width: 22px; height: 22px; accent-color: var(--brand); flex: none; }
 .mapw:has(.mcard.meas:not([hidden])) .mlocb { display: none; }
 .mdb.free { border-style: dashed; }
 .mcard.meas { display: block; padding: 14px 16px; max-height: 60vh; overflow-y: auto; }
@@ -353,3 +356,4 @@ select.field { -webkit-appearance: none; appearance: none; background: var(--car
 .mcard.meas a.btn.pri { color: #fff; } .mcard.meas .mdb2 { display: flex; margin: 0; color: var(--ink); } .mcard.meas .mmh span:not(.mdb2) { margin-top: 2px; }
 .mcard.meas .pills { display: flex; margin: 0; } .mcard.meas .pill2 { display: inline-flex; margin: 0; color: var(--ink); font-size: 13px; }
 .mcal { flex-wrap: wrap; } .mcal p { flex-basis: 100%; margin: 0; line-height: 1.45; }
+.mcard.meas[hidden] { display: none; }
